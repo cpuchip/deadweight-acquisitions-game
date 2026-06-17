@@ -1,6 +1,7 @@
 node_modules
 dist
-.git
 .playwright-cli
 *.log
 npm-debug.log*
+# NOTE: .git is intentionally NOT ignored — the build reads the commit hash from it
+# (git rev-parse) to stamp the version; the Dockerfile removes it after building.

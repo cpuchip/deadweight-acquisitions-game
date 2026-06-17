@@ -48,6 +48,13 @@ mount(MpBasePanel, { target: mpTarget })
 mount(MpMinimap, { target: mpTarget })
 mount(MpChat, { target: mpTarget })
 
+// Always-visible build stamp (which commit this page is) — subtle, bottom-right.
+const buildBadge = document.createElement('div')
+buildBadge.textContent = `build ${__BUILD_SHA__}`
+buildBadge.style.cssText =
+  'position:fixed;bottom:3px;right:7px;z-index:50;font:9px monospace;color:#3a5a6a;opacity:0.6;pointer-events:none;'
+document.body.appendChild(buildBadge)
+
 // Toggle which overlay is live by mode. The Phaser scene swap handles the canvas.
 mpMode.subscribe((mode) => {
   const mp = mode === 'mp'

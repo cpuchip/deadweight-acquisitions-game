@@ -66,6 +66,15 @@ export class MainMenuScene extends Phaser.Scene {
         color: '#3a5a6a',
       })
       .setOrigin(0.5, 0.5)
+
+    // build stamp — which commit this page was built from
+    this.add
+      .text(cx, height - 14, `build ${__BUILD_SHA__}`, {
+        fontFamily: 'monospace',
+        fontSize: '10px',
+        color: '#2a4250',
+      })
+      .setOrigin(0.5, 0.5)
   }
 
   private makeButton(x: number, y: number, label: string, onClick: () => void): void {

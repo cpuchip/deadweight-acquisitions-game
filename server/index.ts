@@ -28,11 +28,24 @@ const CONTENT_TYPES: Record<string, string> = {
   '.map': 'application/json; charset=utf-8',
 }
 
+// the build stamp written by vite (dist/version.txt); read once at startup
+let BUILD_SHA = 'dev'
+try {
+  BUILD_SHA = fs.readFileSync(path.join(DIST, 'version.txt'), 'utf8').trim() || 'dev'
+} catch {
+  /* no build stamp (e.g. dev server before a build) — stays 'dev' */
+}
+
 function serveStatic(req: http.IncomingMessage, res: http.ServerResponse): void {
   const urlPath = decodeURIComponent((req.url || '/').split('?')[0])
   if (urlPath === '/healthz') {
     res.writeHead(200, { 'Content-Type': 'text/plain' })
     res.end('ok')
+    return
+  }
+  if (urlPath === '/version') {
+    res.writeHead(200, { 'Content-Type': 'text/plain' })
+    res.end(BUILD_SHA)
     return
   }
 
