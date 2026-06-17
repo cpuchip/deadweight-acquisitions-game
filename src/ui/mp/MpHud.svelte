@@ -1,7 +1,7 @@
 <script lang="ts">
-  import { mpSnapshot, mpYouCorpId, mpConnection, mpSelectedAsteroid, mpBasePanelOpen, mpIsHost, mpQuickClaim } from '../../state/mpStore'
+  import { mpSnapshot, mpYouCorpId, mpConnection, mpSelectedAsteroid, mpSelectedShip, mpBasePanelOpen, mpIsHost, mpQuickClaim } from '../../state/mpStore'
   import { sendCommand, pauseMatch, quitMatch } from '../../net/mpClient'
-  import type { CorpSnap, AsteroidSnap } from '../../../shared/protocol'
+  import type { CorpSnap, AsteroidSnap, ShipSnap, WorldSnapshot } from '../../../shared/protocol'
 
   function hex(c: number): string {
     return '#' + (c >>> 0).toString(16).padStart(6, '0')
@@ -19,6 +19,22 @@
   $: shipCount = me ? me.ships.length : 0
   $: stored = me ? Math.floor(Object.values(me.storage).reduce((s, n) => s + (n ?? 0), 0)) : 0
   $: selected = selectAsteroid(world?.asteroids, $mpSelectedAsteroid)
+  $: selShip = findShip(world, $mpSelectedShip)
+
+  const SHIP_STATE: Record<string, string> = {
+    idle: 'idle',
+    'to-asteroid': 'en route to asteroid',
+    mining: 'mining',
+    'to-base': 'hauling to base',
+  }
+  function findShip(w: WorldSnapshot | null, id: string | null): { ship: ShipSnap; corp: CorpSnap } | null {
+    if (!w || !id) return null
+    for (const c of w.corps) {
+      const ship = c.ships.find((s) => s.id === id)
+      if (ship) return { ship, corp: c }
+    }
+    return null
+  }
   $: winner = world && world.winnerCorpId ? world.corps.find((c) => c.id === world.winnerCorpId) ?? null : null
 
   function selectAsteroid(list: AsteroidSnap[] | undefined, id: string | null): AsteroidSnap | null {
@@ -128,6 +144,18 @@
       {#if me && me.minerCount === 0 && selected.claimedBy !== $mpYouCorpId}
         <div class="need-miner">No AutoMiner yet — buy one at your base ◉ to mine.</div>
       {/if}
+    </div>
+  {/if}
+
+  <!-- selected ship -->
+  {#if selShip}
+    <div class="sel ship">
+      <div class="sel-title" style="color:{hex(selShip.corp.color)}">
+        {selShip.corp.name}{selShip.corp.id === $mpYouCorpId ? ' · your hauler' : ''}
+      </div>
+      <div class="sel-row"><span>state</span><span>{SHIP_STATE[selShip.ship.phase] ?? selShip.ship.phase}</span></div>
+      <div class="sel-row"><span>cargo</span><span>{selShip.ship.cargo} / {selShip.ship.cargoCapacity}{selShip.ship.cargoResource ? ' · ' + selShip.ship.cargoResource : ''}</span></div>
+      <div class="sel-row"><span>AutoMiner</span><span>{selShip.ship.hasMiner ? 'fitted' : 'none'}</span></div>
     </div>
   {/if}
 
@@ -242,7 +270,7 @@
   }
   .board {
     position: absolute;
-    top: 56px;
+    top: 214px;
     right: 10px;
     width: 250px;
     background: rgba(10, 16, 24, 0.85);

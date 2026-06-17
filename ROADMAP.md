@@ -82,8 +82,19 @@ The big one. Changes the competitive feel toward more micromanagement.
 - Honest tension acknowledged + accepted: the deep sim (v5–v6) adds real
   micromanagement to the race. Full parity is the call anyway.
 
+## Goal (set 2026-06-17): reach v7 — full parity.
+
+Michael: "I want it all — set a goal to get to v7." Autonomous build (Ammon): drive
+the phases to completion, surface only when his input is genuinely needed. Auto-deploy
+on push is fixed (GitHub App granted access to the repo).
+
 ## Progress
 
-- **v3 started 2026-06-17:** designation UX flipped to Dave's default (click selects;
-  panel button designates) + quick-claim toggle. Next in v3: minimap, EntityPanel
-  build-out, bigger textured planet.
+- **v3 COMPLETE 2026-06-17:**
+  - designation UX = Dave's select→designate default + quick-claim toggle ✓
+  - **minimap** (DOM canvas, top-right; planet/asteroids/bases/ships) ✓
+  - **EntityPanel**: ship selection + detail (state/cargo/miner/owner) ✓ + asteroid panel
+  - bigger **textured planet** (banding) ✓
+  - (deferred to when entities split: miner/net detail panels — that's v5)
+- **v4 NEXT:** fuller base (cargo upgrades, auto-designate, miner storage), named ships
+  with per-ship upgrades, multiple miners per hauler (attachment slots).

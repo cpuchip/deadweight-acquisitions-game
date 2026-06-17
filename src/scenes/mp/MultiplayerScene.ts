@@ -5,12 +5,13 @@ import {
   mpSnapshot,
   mpYouCorpId,
   mpSelectedAsteroid,
+  mpSelectedShip,
   mpBasePanelOpen,
   mpQuickClaim,
 } from '../../state/mpStore'
 import { sendCommand } from '../../net/mpClient'
 import { PLANET_RADIUS } from '../../../shared/mpConfig'
-import type { WorldSnapshot, AsteroidSnap, CorpSnap } from '../../../shared/protocol'
+import type { WorldSnapshot, AsteroidSnap, ShipSnap, CorpSnap } from '../../../shared/protocol'
 
 const SIZE_RADIUS: Record<string, number> = { small: 7, medium: 11, large: 17 }
 const CLICK_TOLERANCE = 6 // screen px movement under which a pointerup counts as a click
@@ -95,15 +96,26 @@ export class MultiplayerScene extends Phaser.Scene {
     if (myBase && Math.hypot(world.x - myBase.baseX, world.y - myBase.baseY) <= BASE_OUTER_R + 14) {
       mpBasePanelOpen.set(true)
       mpSelectedAsteroid.set(null)
+      mpSelectedShip.set(null)
+      return
+    }
+
+    // a ship takes priority over an asteroid behind it
+    const ship = this.nearestShip(world.x, world.y)
+    if (ship) {
+      mpSelectedShip.set(ship.id)
+      mpSelectedAsteroid.set(null)
       return
     }
 
     const a = this.nearestAsteroid(world.x, world.y)
     if (!a) {
       mpSelectedAsteroid.set(null)
+      mpSelectedShip.set(null)
       return
     }
     mpSelectedAsteroid.set(a.id)
+    mpSelectedShip.set(null)
     // Dave's default: click only SELECTS — the panel's "Designate for Mining" button
     // dispatches. The quick-claim toggle restores click-to-designate.
     if (get(mpQuickClaim)) {
@@ -111,6 +123,19 @@ export class MultiplayerScene extends Phaser.Scene {
       if (!a.claimedBy) sendCommand({ kind: 'designate', asteroidId: a.id })
       else if (a.claimedBy === me) sendCommand({ kind: 'undesignate', asteroidId: a.id })
     }
+  }
+
+  private nearestShip(wx: number, wy: number): ShipSnap | null {
+    if (!this.snap) return null
+    let best: { s: ShipSnap; d: number } | null = null
+    for (const c of this.snap.corps) {
+      if (!c.alive) continue
+      for (const s of c.ships) {
+        const d = Math.hypot(s.x - wx, s.y - wy)
+        if (d <= 16 && (!best || d < best.d)) best = { s, d }
+      }
+    }
+    return best?.s ?? null
   }
 
   private nearestAsteroid(wx: number, wy: number): AsteroidSnap | null {
@@ -143,13 +168,20 @@ export class MultiplayerScene extends Phaser.Scene {
     const colorOf = new Map(this.snap.corps.map((c) => [c.id, c.color]))
     const selected = get(mpSelectedAsteroid)
 
-    // central planet
-    g.fillStyle(0x1c3247, 1)
-    g.fillCircle(0, 0, PLANET_RADIUS)
-    g.fillStyle(0x244058, 0.6)
-    g.fillCircle(-PLANET_RADIUS * 0.25, -PLANET_RADIUS * 0.2, PLANET_RADIUS * 0.55)
+    // central planet — textured bands (kept within the disc)
+    const PR = PLANET_RADIUS
+    g.fillStyle(0x172838, 1)
+    g.fillCircle(0, 0, PR)
+    g.fillStyle(0x1f3a52, 0.7)
+    g.fillEllipse(0, -PR * 0.34, PR * 1.5, PR * 0.32)
+    g.fillStyle(0x12283a, 0.75)
+    g.fillEllipse(0, PR * 0.18, PR * 1.7, PR * 0.26)
+    g.fillStyle(0x1a3346, 0.7)
+    g.fillEllipse(0, PR * 0.55, PR * 1.2, PR * 0.22)
+    g.fillStyle(0x2a4a64, 0.45)
+    g.fillCircle(-PR * 0.3, -PR * 0.3, PR * 0.4) // terminator highlight
     g.lineStyle(2, 0x3a6090, 1)
-    g.strokeCircle(0, 0, PLANET_RADIUS)
+    g.strokeCircle(0, 0, PR)
 
     // asteroids
     for (const a of this.snap.asteroids) {

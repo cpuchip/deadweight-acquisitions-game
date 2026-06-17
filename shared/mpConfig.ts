@@ -40,7 +40,7 @@ export const UNLOAD_SECONDS = 1.5 // dwell at base while moving cargo into stora
 export const ARRIVAL_RADIUS = 28 // world units, "close enough" to a point
 
 // --- field layout (faithful: planet at origin, bases in GEO orbit around it) ---
-export const PLANET_RADIUS = 120 // visual planet radius (SP planet sits at 0,0)
+export const PLANET_RADIUS = 160 // visual planet radius (SP planet sits at 0,0)
 export const BASE_ORBIT_RADIUS = 650 // bases sit this far from the planet (SP base is at y=650)
 export const WORLD_RADIUS = 3000 // soft bound used for camera + minimap framing
 
