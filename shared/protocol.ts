@@ -80,6 +80,8 @@ export interface ShipSnap {
   targetAsteroidId: string | null
   /** true while carrying a miner out to deploy it */
   carryingMiner: boolean
+  /** miners loaded in the bay (0..MINER_SLOTS) — for the attachment-point display */
+  minersAboard: number
   /** thruster fuel remaining (0..HAULER_FUEL_MAX); tops off at base for a fee */
   fuel: number
   /** battery charge (0..HAULER_BATTERY_MAX); recharges while parked */
@@ -145,7 +147,6 @@ export type GameCommand =
   | { kind: 'buyShip' }
   | { kind: 'buyMiner' }
   | { kind: 'sell'; resource: ResourceType }
-  | { kind: 'upgradeShip'; shipId: string }
   | { kind: 'toggleAutoDesignate' }
 
 export type ClientMessage =

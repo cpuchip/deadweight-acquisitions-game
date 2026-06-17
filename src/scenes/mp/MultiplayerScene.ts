@@ -16,6 +16,17 @@ import { PLANET_RADIUS } from '../../../shared/mpConfig'
 import type { WorldSnapshot, AsteroidSnap, ShipSnap, MinerSnap, CorpSnap } from '../../../shared/protocol'
 
 const SIZE_RADIUS: Record<string, number> = { small: 7, medium: 11, large: 17 }
+
+/** linear blend between two 0xRRGGBB colors */
+function lerpColor(a: number, b: number, t: number): number {
+  const ar = (a >> 16) & 0xff
+  const ag = (a >> 8) & 0xff
+  const ab = a & 0xff
+  const r = Math.round(ar + (((b >> 16) & 0xff) - ar) * t)
+  const g = Math.round(ag + (((b >> 8) & 0xff) - ag) * t)
+  const bl = Math.round(ab + ((b & 0xff) - ab) * t)
+  return (r << 16) | (g << 8) | bl
+}
 const BASE_OUTER_R = 32 // matches Dave's base texture outer ring
 const BASE_INNER_R = 20
 // station look (faithful to SP): 6 docks (close, blue) + 3 hangars (farther, orange)
@@ -288,19 +299,22 @@ export class MultiplayerScene extends Phaser.Scene {
     const colorOf = new Map(this.snap.corps.map((c) => [c.id, c.color]))
     const selected = get(mpSelectedAsteroid)
 
-    // central planet — textured bands (kept within the disc)
+    // central planet — a shaded sphere (radial gradient lit from the upper-left) with a
+    // soft atmosphere halo, like SP's smooth planet
     const PR = PLANET_RADIUS
-    g.fillStyle(0x172838, 1)
-    g.fillCircle(0, 0, PR)
-    g.fillStyle(0x1f3a52, 0.7)
-    g.fillEllipse(0, -PR * 0.34, PR * 1.5, PR * 0.32)
-    g.fillStyle(0x12283a, 0.75)
-    g.fillEllipse(0, PR * 0.18, PR * 1.7, PR * 0.26)
-    g.fillStyle(0x1a3346, 0.7)
-    g.fillEllipse(0, PR * 0.55, PR * 1.2, PR * 0.22)
-    g.fillStyle(0x2a4a64, 0.45)
-    g.fillCircle(-PR * 0.3, -PR * 0.3, PR * 0.4) // terminator highlight
-    g.lineStyle(2, 0x3a6090, 1)
+    for (let i = 5; i >= 1; i--) {
+      g.fillStyle(0x2a5a8a, 0.045 * i) // faint blue atmosphere glow outside the disc
+      g.fillCircle(0, 0, PR + i * 7)
+    }
+    const lx = -PR * 0.34
+    const ly = -PR * 0.34 // light from the upper-left
+    const STEPS = 26
+    for (let i = 0; i < STEPS; i++) {
+      const t = i / (STEPS - 1) // 0 = dark rim, 1 = lit centre
+      g.fillStyle(lerpColor(0x14222f, 0x37627f, t), 1)
+      g.fillCircle(lx * t, ly * t, PR * (1 - t)) // centre drifts toward the light = terminator
+    }
+    g.lineStyle(1.5, 0x4a7090, 0.85)
     g.strokeCircle(0, 0, PR)
 
     // asteroids
@@ -419,13 +433,7 @@ export class MultiplayerScene extends Phaser.Scene {
         }
         const p = this.smooth(s.id, tx, ty)
         this.drawShip(p.x, p.y, s.angle, c.color)
-        if (s.carryingMiner) {
-          g.fillStyle(0xffffff, 0.95)
-          g.fillRect(p.x - 3, p.y - 3, 6, 6) // the miner it's carrying out
-        } else if (s.cargo > 0) {
-          g.fillStyle(0xffcc44, 0.95)
-          g.fillCircle(p.x, p.y, 3) // ore nets aboard
-        }
+        this.drawAttachments(p.x, p.y, s)
       }
     }
 
@@ -449,6 +457,40 @@ export class MultiplayerScene extends Phaser.Scene {
     // keep a constant on-screen size regardless of camera zoom
     label.setScale(1 / this.cameras.main.zoom)
     label.setAlpha(c.alive ? 1 : 0.3)
+  }
+
+  /** the ship's 4 attachment points below the hull (faithful to SP): 2 small
+   * (net-store fill + a spare) + 2 medium miner bays, each a vertical fill slot. */
+  private drawAttachments(x: number, y: number, s: ShipSnap): void {
+    const slotH = 12
+    const sw = 6 // small slot width
+    const mw = 9 // medium slot width
+    const gap = 2
+    const totalW = sw * 2 + mw * 2 + gap * 3
+    const top = y + 11 // just below the hull
+    let sx = x - totalW / 2
+    // small slot 1: net-store — fills with the nets aboard (cargo / capacity)
+    const netFrac = s.cargoCapacity > 0 ? Math.min(1, s.cargo / s.cargoCapacity) : 0
+    this.drawSlot(sx, top, sw, slotH, netFrac, 0xffcc44)
+    sx += sw + gap
+    // small slot 2: spare
+    this.drawSlot(sx, top, sw, slotH, 0, 0xffffff)
+    sx += sw + gap
+    // medium slots: the two miner bays — solid when a miner is aboard
+    this.drawSlot(sx, top, mw, slotH, s.minersAboard >= 1 ? 1 : 0, 0xffffff)
+    sx += mw + gap
+    this.drawSlot(sx, top, mw, slotH, s.minersAboard >= 2 ? 1 : 0, 0xffffff)
+  }
+
+  private drawSlot(x: number, y: number, w: number, h: number, frac: number, fill: number): void {
+    const g = this.gfx
+    g.lineStyle(1, 0x4a6a7a, 0.85)
+    g.strokeRect(x, y, w, h)
+    if (frac > 0) {
+      const fh = h * frac
+      g.fillStyle(fill, 0.9)
+      g.fillRect(x + 1, y + (h - fh) + 1, w - 2, Math.max(1, fh - 2)) // fills from the bottom up
+    }
   }
 
   private drawShip(x: number, y: number, angle: number, color: number): void {

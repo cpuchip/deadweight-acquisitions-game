@@ -1,7 +1,7 @@
 <script lang="ts">
   import { mpSnapshot, mpYouCorpId, mpConnection, mpSelectedAsteroid, mpSelectedShip, mpSelectedMiner, mpBasePanelOpen, mpIsHost, mpQuickClaim } from '../../state/mpStore'
   import { sendCommand, pauseMatch, quitMatch } from '../../net/mpClient'
-  import { MAX_CARGO_LEVEL, CARGO_UPGRADE_COSTS, CARGO_CAPACITY_TIERS, HAULER_FUEL_MAX, HAULER_BATTERY_MAX, MINER_BATTERY_MAX, CONDITION_GRACE_THRESHOLD, CONDITION_CAP_THRESHOLD } from '../../../shared/mpConfig'
+  import { MINER_SLOTS, HAULER_FUEL_MAX, HAULER_BATTERY_MAX, MINER_BATTERY_MAX, CONDITION_GRACE_THRESHOLD, CONDITION_CAP_THRESHOLD } from '../../../shared/mpConfig'
   import type { CorpSnap, AsteroidSnap, ShipSnap, MinerSnap, WorldSnapshot } from '../../../shared/protocol'
 
   function hex(c: number): string {
@@ -88,9 +88,6 @@
   }
   function toggleQuickClaim(): void {
     mpQuickClaim.update((v) => !v)
-  }
-  function upgrade(shipId: string): void {
-    sendCommand({ kind: 'upgradeShip', shipId })
   }
   function claim(a: AsteroidSnap): void {
     if (a.claimedBy === $mpYouCorpId) sendCommand({ kind: 'undesignate', asteroidId: a.id })
@@ -191,22 +188,7 @@
       <div class="meter"><span class="meter-fill fuel" style="width:{(selShip.ship.fuel / HAULER_FUEL_MAX) * 100}%"></span></div>
       <div class="sel-row"><span>battery</span><span>{selShip.ship.battery} / {HAULER_BATTERY_MAX}</span></div>
       <div class="meter"><span class="meter-fill batt" style="width:{(selShip.ship.battery / HAULER_BATTERY_MAX) * 100}%"></span></div>
-      {#if selShip.ship.carryingMiner}
-        <div class="sel-row"><span>bay</span><span>carrying a miner</span></div>
-      {/if}
-      {#if selShip.corp.id === $mpYouCorpId}
-        {#if selShip.ship.cargoLevel < MAX_CARGO_LEVEL}
-          <button
-            class="sel-btn"
-            disabled={!me || me.credits < CARGO_UPGRADE_COSTS[selShip.ship.cargoLevel]}
-            on:click={() => upgrade(selShip.ship.id)}
-          >
-            UPGRADE CARGO → {CARGO_CAPACITY_TIERS[selShip.ship.cargoLevel + 1]}t · {CARGO_UPGRADE_COSTS[selShip.ship.cargoLevel]}cr
-          </button>
-        {:else}
-          <div class="sel-row"><span>cargo hold</span><span>MAX</span></div>
-        {/if}
-      {/if}
+      <div class="sel-row"><span>miner bays</span><span>{selShip.ship.minersAboard} / {MINER_SLOTS} loaded</span></div>
     </div>
   {/if}
 

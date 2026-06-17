@@ -12,7 +12,8 @@ import MpHud from './ui/mp/MpHud.svelte'
 import MpBasePanel from './ui/mp/MpBasePanel.svelte'
 import MpMinimap from './ui/mp/MpMinimap.svelte'
 import MpChat from './ui/mp/MpChat.svelte'
-import { mpMode } from './state/mpStore'
+import { get } from 'svelte/store'
+import { mpMode, spaceActive } from './state/mpStore'
 
 new Phaser.Game({
   type: Phaser.AUTO,
@@ -56,8 +57,11 @@ buildBadge.style.cssText =
 document.body.appendChild(buildBadge)
 
 // Toggle which overlay is live by mode. The Phaser scene swap handles the canvas.
-mpMode.subscribe((mode) => {
-  const mp = mode === 'mp'
+// The SP HUD shows only while the SpaceScene is actually running (not on the title).
+function syncOverlays(): void {
+  const mp = get(mpMode) === 'mp'
   mpTarget.style.display = mp ? 'block' : 'none'
-  if (hudTarget) hudTarget.style.display = mp ? 'none' : 'block'
-})
+  if (hudTarget) hudTarget.style.display = !mp && get(spaceActive) ? 'block' : 'none'
+}
+mpMode.subscribe(syncOverlays)
+spaceActive.subscribe(syncOverlays)

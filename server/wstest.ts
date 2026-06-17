@@ -127,15 +127,11 @@ async function main(): Promise<void> {
     }
   }
 
-  // v4: ship naming + cargo upgrade over the network
+  // v4: ship naming
   {
     const myShip = alpha.snap?.corps.find((c) => c.id === alpha.corpId)?.ships[0]
     assert(!!myShip && /^Hauler-\d{2}$/.test(myShip.name), 'ships are named (e.g. Hauler-01)')
-    const capBefore = myShip!.cargoCapacity
-    send(alpha.ws, { type: 'cmd', cmd: { kind: 'upgradeShip', shipId: myShip!.id } })
-    await sleep(700)
-    const after = alpha.snap?.corps.find((c) => c.id === alpha.corpId)?.ships[0]
-    assert(!!after && after.cargoCapacity > capBefore, 'cargo upgrade raised capacity over the network')
+    assert(typeof myShip!.minersAboard === 'number', 'ship reports miner-bay count (attachment display)')
   }
 
   // claim contest: Beta cannot claim Alpha's asteroid

@@ -1,6 +1,6 @@
 import Phaser from 'phaser'
 import { GameSaveService } from '../services/GameSaveService'
-import { mpMode } from '../state/mpStore'
+import { mpMode, spaceActive } from '../state/mpStore'
 
 export class MainMenuScene extends Phaser.Scene {
   constructor() {
@@ -8,6 +8,7 @@ export class MainMenuScene extends Phaser.Scene {
   }
 
   create(): void {
+    spaceActive.set(false) // on the title screen — hide the SP HUD overlay
     // Deep link: /?mp=1 (optionally &room=code) jumps straight into multiplayer,
     // so a shared link lands friends in the lobby without touching the menu.
     if (new URLSearchParams(location.search).has('mp')) {

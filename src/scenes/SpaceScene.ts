@@ -3,6 +3,7 @@ import { shipHasFreeMediumSlot, selectDispatchTarget, selectHaulerForDesignation
 import type { AttachmentPayload } from '../state/attachmentTypes'
 import { nanoid } from 'nanoid'
 import { get } from 'svelte/store'
+import { spaceActive } from '../state/mpStore'
 import { generateWorld, generateCompanyAsteroid } from '../world/worldGenerator'
 import { computeServiceSlots, SERVICE_SLOT_COUNT, type SlotPosition } from '../world/serviceSlots'
 import { computeHangarBays, HANGAR_BAY_COUNT, HANGAR_PRESSURIZED_FACTOR, type HangarPosition } from '../world/hangarBays'
@@ -183,6 +184,7 @@ export class SpaceScene extends Phaser.Scene {
   }
 
   create(): void {
+    spaceActive.set(true) // the SP game is running — show the SP HUD overlay
     this.gameClock = 0
     this.autoSaveAccumulator = 0
     this.buildStarLayers()

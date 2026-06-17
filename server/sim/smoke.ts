@@ -132,12 +132,6 @@ assert(final.asteroids.some((a) => a.isCompany), 'company asteroids are flagged 
   const c0 = w.snapshot().corps[0]
   assert(/^Hauler-\d{2}$/.test(c0.ships[0].name), 'ships are named Hauler-NN')
 
-  const ship = c0.ships[0]
-  const capBefore = ship.cargoCapacity
-  w.applyCommand('Z', { kind: 'upgradeShip', shipId: ship.id })
-  const after = w.snapshot().corps[0].ships[0]
-  assert(after.cargoLevel === 1 && after.cargoCapacity > capBefore, 'cargo upgrade raises capacity')
-
   w.start()
   w.applyCommand('Z', { kind: 'buyMiner' })
   w.applyCommand('Z', { kind: 'toggleAutoDesignate' })

@@ -30,8 +30,6 @@ import {
   SHIP_COST,
   MINER_COST,
   CARGO_CAPACITY_TIERS,
-  CARGO_UPGRADE_COSTS,
-  MAX_CARGO_LEVEL,
   STORAGE_CAPACITY,
   MAX_SHIPS_PER_CORP,
   SHIP_SPEED,
@@ -300,9 +298,6 @@ export class World {
       case 'sell':
         this.sellResource(corp, cmd.resource)
         break
-      case 'upgradeShip':
-        this.upgradeShip(corp, cmd.shipId)
-        break
       case 'toggleAutoDesignate':
         corp.autoDesignate = !corp.autoDesignate
         break
@@ -374,16 +369,6 @@ export class World {
     if (qty <= 0) return
     corp.storage[resource] = 0
     corp.credits += qty * (RESOURCE_SELL_PRICES[resource] ?? 1)
-  }
-
-  private upgradeShip(corp: SimCorp, shipId: string): void {
-    const ship = corp.ships.find((s) => s.id === shipId)
-    if (!ship || ship.cargoLevel >= MAX_CARGO_LEVEL) return
-    const cost = CARGO_UPGRADE_COSTS[ship.cargoLevel]
-    if (corp.credits < cost) return
-    corp.credits -= cost
-    ship.cargoLevel += 1
-    this.pushLog(`${corp.name} upgraded ${ship.name}'s cargo hold to ${shipCapacity(ship)} t.`)
   }
 
   // ---- simulation ----
@@ -968,6 +953,7 @@ export class World {
         cargoResource: s.cargoResource,
         targetAsteroidId: s.targetAsteroidId,
         carryingMiner: s.minersAboard > 0,
+        minersAboard: s.minersAboard,
         fuel: Math.round(s.fuel),
         battery: Math.round(s.battery),
       })),

@@ -10,6 +10,10 @@ export type MpConnection = 'idle' | 'connecting' | 'connected' | 'error' | 'clos
 /** 'mp' while the multiplayer overlay + scene are active; 'off' for Dave's game. */
 export const mpMode = writable<MpMode>('off')
 
+/** true only while the single-player SpaceScene is running (not on the title screen),
+ * so the SP HUD overlay doesn't leak onto the main menu */
+export const spaceActive = writable<boolean>(false)
+
 export const mpConnection = writable<MpConnection>('idle')
 export const mpError = writable<string | null>(null)
 export const mpRoom = writable<string>('')
