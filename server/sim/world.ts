@@ -51,7 +51,22 @@ import {
   HAULER_BATTERY_MAX,
   HAULER_BATTERY_CHARGE_RATE,
   REFUEL_FEE_PER_UNIT,
+  CONDITION_GRACE_THRESHOLD,
+  CONDITION_CAP_THRESHOLD,
+  CONDITION_MAX_PENALTY,
+  CONDITION_WEAR_PER_SEC,
+  MINER_BATTERY_MAX,
+  MINER_BATTERY_DRAIN_MINING,
+  REPAIR_FEE_PER_POINT,
 } from '../../shared/mpConfig'
+
+/** Mining-rate penalty fraction from condition (mirrors Dave's conditionPenaltyFraction):
+ * 0 above grace, ramps to 1 at the cap threshold. */
+function conditionPenalty(condition: number): number {
+  if (condition >= CONDITION_GRACE_THRESHOLD) return 0
+  if (condition < CONDITION_CAP_THRESHOLD) return 1
+  return (CONDITION_GRACE_THRESHOLD - condition) / (CONDITION_GRACE_THRESHOLD - CONDITION_CAP_THRESHOLD)
+}
 import type {
   GameCommand,
   WorldSnapshot,
@@ -100,6 +115,8 @@ interface SimMiner {
   /** ore mined + ejected as nets, awaiting collection (0..MINER_ORE_CAP) */
   oreReady: number
   state: MinerState
+  condition: number
+  battery: number
 }
 
 interface SimCorp {
@@ -488,15 +505,24 @@ export class World {
     }
     if (!a || a.currentQuantity <= 0) {
       m.state = 'depleted'
-    } else if (m.oreReady >= MINER_ORE_CAP) {
-      m.state = 'net-starved'
     } else {
-      const amount = Math.min(MINE_RATE * dt, a.currentQuantity, MINER_ORE_CAP - m.oreReady)
-      if (amount > 0) {
-        a.currentQuantity -= amount
-        m.oreReady += amount
+      // a deployed miner wears down while on station (mining or waiting); a servicing
+      // hauler repairs it. condition cuts the effective mining rate below grace.
+      m.condition = Math.max(0, m.condition - CONDITION_WEAR_PER_SEC * dt)
+      if (m.oreReady >= MINER_ORE_CAP) {
+        m.state = 'net-starved'
+      } else if (m.battery <= 0) {
+        m.state = 'net-starved' // out of power — awaits a hauler recharge
+      } else {
+        m.battery = Math.max(0, m.battery - MINER_BATTERY_DRAIN_MINING * dt)
+        const rate = MINE_RATE * (1 - CONDITION_MAX_PENALTY * conditionPenalty(m.condition))
+        const amount = Math.min(rate * dt, a.currentQuantity, MINER_ORE_CAP - m.oreReady)
+        if (amount > 0) {
+          a.currentQuantity -= amount
+          m.oreReady += amount
+        }
+        m.state = m.oreReady >= MINER_ORE_CAP ? 'net-starved' : 'mining'
       }
-      m.state = m.oreReady >= MINER_ORE_CAP ? 'net-starved' : 'mining'
     }
     // beacon: announce once when a miner first fills up (its nets need a hauler)
     if (m.state === 'net-starved' && prev !== 'net-starved') {
@@ -552,6 +578,8 @@ export class World {
             resourceType: a.resourceType,
             oreReady: 0,
             state: 'mining',
+            condition: 1,
+            battery: MINER_BATTERY_MAX,
           })
         }
         ship.carryingMiner = false
@@ -574,6 +602,7 @@ export class World {
           ship.phase = ship.cargo > 0 ? 'to-base' : 'idle'
           return
         }
+        this.serviceMiner(corp, miner) // dock service: recharge + repair the miner
         // wait at the asteroid until at least one net is ready (or the miner is
         // net-starved / done) — the miner buffers nets during the hauler's round trip
         const ready =
@@ -662,6 +691,17 @@ export class World {
         }
         return
       }
+    }
+  }
+
+  /** field service when a hauler docks at a deployed miner: recharge its battery (free —
+   * the hauler brings power) and, if it has worn below grace, repair it for a credit fee. */
+  private serviceMiner(corp: SimCorp, m: SimMiner): void {
+    m.battery = MINER_BATTERY_MAX
+    if (m.condition < CONDITION_GRACE_THRESHOLD) {
+      const restore = 1 - m.condition
+      corp.credits = Math.max(0, corp.credits - restore * REPAIR_FEE_PER_POINT)
+      m.condition = 1
     }
   }
 
@@ -816,6 +856,8 @@ export class World {
         resourceType: m.resourceType,
         netsReady: Math.floor(m.oreReady / NET_CAPACITY),
         state: m.state,
+        condition: m.condition,
+        battery: Math.round(m.battery),
       })),
       orphanNets: c.orphanNets.map((o) => ({
         id: o.id,

@@ -60,6 +60,15 @@ export const HAULER_BATTERY_MAX = 100
 export const HAULER_BATTERY_CHARGE_RATE = 0.5 // recharges while not thrusting (parked/coasting)
 export const REFUEL_FEE_PER_UNIT = 0.15 // station service fee, credits per fuel unit topped off
 
+// --- v6 miner condition + battery (mirror Dave's AutoMiner.ts; auto-serviced by haulers) ---
+export const CONDITION_GRACE_THRESHOLD = 0.7 // condition >= this: no mining penalty
+export const CONDITION_CAP_THRESHOLD = 0.3 // condition < this: full penalty
+export const CONDITION_MAX_PENALTY = 0.5 // worst-case mining-rate cut (50%) when worn out
+export const CONDITION_WEAR_PER_SEC = 0.012 // condition lost per second on-station (MP-tuned so it dips below grace between far-rock services)
+export const MINER_BATTERY_MAX = 200
+export const MINER_BATTERY_DRAIN_MINING = 2 // per second while mining
+export const REPAIR_FEE_PER_POINT = 60 // credits per condition point (1.0) restored at base (hangar)
+
 // --- field layout (faithful: planet at origin, bases in GEO orbit around it) ---
 export const PLANET_RADIUS = 160 // visual planet radius (SP planet sits at 0,0)
 export const BASE_ORBIT_RADIUS = 650 // bases sit this far from the planet (SP base is at y=650)

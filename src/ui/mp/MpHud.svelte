@@ -1,7 +1,7 @@
 <script lang="ts">
   import { mpSnapshot, mpYouCorpId, mpConnection, mpSelectedAsteroid, mpSelectedShip, mpSelectedMiner, mpBasePanelOpen, mpIsHost, mpQuickClaim } from '../../state/mpStore'
   import { sendCommand, pauseMatch, quitMatch } from '../../net/mpClient'
-  import { MAX_CARGO_LEVEL, CARGO_UPGRADE_COSTS, CARGO_CAPACITY_TIERS, HAULER_FUEL_MAX, HAULER_BATTERY_MAX } from '../../../shared/mpConfig'
+  import { MAX_CARGO_LEVEL, CARGO_UPGRADE_COSTS, CARGO_CAPACITY_TIERS, HAULER_FUEL_MAX, HAULER_BATTERY_MAX, MINER_BATTERY_MAX, CONDITION_GRACE_THRESHOLD, CONDITION_CAP_THRESHOLD } from '../../../shared/mpConfig'
   import type { CorpSnap, AsteroidSnap, ShipSnap, MinerSnap, WorldSnapshot } from '../../../shared/protocol'
 
   function hex(c: number): string {
@@ -223,6 +223,13 @@
         <span class:hot={selMiner.miner.state === 'net-starved'}>{MINER_STATE[selMiner.miner.state] ?? selMiner.miner.state}</span>
       </div>
       <div class="sel-row"><span>nets ready</span><span>{selMiner.miner.netsReady}</span></div>
+      <div class="sel-row">
+        <span>condition</span>
+        <span class:hot={selMiner.miner.condition < CONDITION_CAP_THRESHOLD}>{Math.round(selMiner.miner.condition * 100)}%</span>
+      </div>
+      <div class="meter"><span class="meter-fill cond" class:worn={selMiner.miner.condition < CONDITION_GRACE_THRESHOLD} style="width:{selMiner.miner.condition * 100}%"></span></div>
+      <div class="sel-row"><span>battery</span><span>{selMiner.miner.battery} / {MINER_BATTERY_MAX}</span></div>
+      <div class="meter"><span class="meter-fill batt" style="width:{(selMiner.miner.battery / MINER_BATTERY_MAX) * 100}%"></span></div>
       {#if a}
         <div class="sel-row"><span>rock</span><span>{a.currentQuantity} / {a.maxQuantity} t</span></div>
       {/if}
@@ -473,6 +480,12 @@
   }
   .meter-fill.batt {
     background: #4ad0c0;
+  }
+  .meter-fill.cond {
+    background: #6ab85a;
+  }
+  .meter-fill.cond.worn {
+    background: #d8a23a;
   }
   .sel {
     position: absolute;

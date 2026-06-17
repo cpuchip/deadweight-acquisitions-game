@@ -299,6 +299,41 @@ assert(final.asteroids.some((a) => a.isCompany), 'company asteroids are flagged 
   assert(w.snapshot().corps[0].credits < startCredits, 'returning to base charged a refuel fee (station service credit sink)')
 }
 
+// ---- v6: miner condition wear + hauler repair ----
+{
+  const w = new World(888)
+  w.addCorp('C', 'Cond', 0x55ccff)
+  w.start()
+  w.applyCommand('C', { kind: 'buyMiner' })
+  // far rock: the long hauler round trip spaces out services, so the miner wears below
+  // grace between visits and the servicing hauler must repair it
+  const cs = w.snapshot()
+  const cbase = cs.corps[0]
+  let far: { id: string; d: number } | null = null
+  for (const a of cs.asteroids) {
+    if (a.sizeCategory !== 'large') continue
+    const d = Math.hypot(a.x - cbase.baseX, a.y - cbase.baseY)
+    if (!far || d > far.d) far = { id: a.id, d }
+  }
+  w.applyCommand('C', { kind: 'designate', asteroidId: far!.id })
+  let minCond = 1
+  let sawRepair = false
+  let prevCond = 1
+  let prevId: string | null = null
+  for (let i = 0; i < 150 * SIM_HZ; i++) {
+    w.tick(dt)
+    const m = w.snapshot().corps[0].miners[0]
+    if (m) {
+      minCond = Math.min(minCond, m.condition)
+      if (m.id === prevId && m.condition > prevCond + 0.05) sawRepair = true // a repair jump
+      prevId = m.id
+      prevCond = m.condition
+    }
+  }
+  assert(minCond < 0.9, 'a deployed miner wears down (condition drops with use)')
+  assert(sawRepair, 'a servicing hauler repairs a worn miner (condition jumps back up)')
+}
+
 if (failures > 0) {
   console.error(`\n${failures} assertion(s) failed`)
   process.exit(1)

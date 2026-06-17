@@ -31,6 +31,10 @@ export interface MinerSnap {
   /** tethered nets waiting for the hauler (each ~NET_CAPACITY ore) */
   netsReady: number
   state: MinerState
+  /** mechanical condition 0..1 — wears with use, repaired by a servicing hauler */
+  condition: number
+  /** battery 0..MINER_BATTERY_MAX — drains while mining, recharged by a servicing hauler */
+  battery: number
 }
 
 /** Free-floating nets left behind when a miner is recalled/lost with ore still
