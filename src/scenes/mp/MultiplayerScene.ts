@@ -16,9 +16,13 @@ import { PLANET_RADIUS } from '../../../shared/mpConfig'
 import type { WorldSnapshot, AsteroidSnap, ShipSnap, MinerSnap, CorpSnap } from '../../../shared/protocol'
 
 const SIZE_RADIUS: Record<string, number> = { small: 7, medium: 11, large: 17 }
-const CLICK_TOLERANCE = 6 // screen px movement under which a pointerup counts as a click
 const BASE_OUTER_R = 32 // matches Dave's base texture outer ring
 const BASE_INNER_R = 20
+// station look (faithful to SP): 6 docks (close, blue) + 3 hangars (farther, orange)
+const DOCK_COUNT = 6
+const DOCK_RADIUS = 46
+const HANGAR_COUNT = 3
+const HANGAR_RADIUS = 110 // SP HANGAR_BAY_RADIUS
 
 export class MultiplayerScene extends Phaser.Scene {
   private gfx!: Phaser.GameObjects.Graphics
@@ -102,6 +106,7 @@ export class MultiplayerScene extends Phaser.Scene {
     })
     this.input.on('pointermove', (p: Phaser.Input.Pointer) => {
       if (!this.dragging) return
+      if (this.dragButton === 0) return // LEFT button never pans — it's select-only
       const dx = p.x - this.dragStart.x
       const dy = p.y - this.dragStart.y
       this.moved = Math.max(this.moved, Math.abs(dx) + Math.abs(dy))
@@ -110,8 +115,9 @@ export class MultiplayerScene extends Phaser.Scene {
     })
     this.input.on('pointerup', (p: Phaser.Input.Pointer) => {
       this.dragging = false
-      // only a LEFT click selects/claims; right/middle are pan-only
-      if (this.moved <= CLICK_TOLERANCE && this.dragButton === 0) this.handleClick(p)
+      // LEFT = select (never drags, so a wiggle while clicking still selects);
+      // right/middle are pan-only
+      if (this.dragButton === 0) this.handleClick(p)
     })
     this.input.on('wheel', (_p: Phaser.Input.Pointer, _o: unknown, _dx: number, dy: number) => {
       const next = Phaser.Math.Clamp(this.cameras.main.zoom * (dy > 0 ? 0.9 : 1.1), 0.12, 1.5)
@@ -206,14 +212,20 @@ export class MultiplayerScene extends Phaser.Scene {
     }
   }
 
+  /** where an entity is actually drawn (eased/parked), so a click matches what you see */
+  private shownPos(id: string, rawX: number, rawY: number): { x: number; y: number } {
+    return this.disp.get(id) ?? { x: rawX, y: rawY }
+  }
+
   private nearestShip(wx: number, wy: number): ShipSnap | null {
     if (!this.snap) return null
     let best: { s: ShipSnap; d: number } | null = null
     for (const c of this.snap.corps) {
       if (!c.alive) continue
       for (const s of c.ships) {
-        const d = Math.hypot(s.x - wx, s.y - wy)
-        if (d <= 16 && (!best || d < best.d)) best = { s, d }
+        const p = this.shownPos(s.id, s.x, s.y)
+        const d = Math.hypot(p.x - wx, p.y - wy)
+        if (d <= 32 && (!best || d < best.d)) best = { s, d }
       }
     }
     return best?.s ?? null
@@ -225,8 +237,9 @@ export class MultiplayerScene extends Phaser.Scene {
     for (const c of this.snap.corps) {
       if (!c.alive) continue
       for (const m of c.miners) {
-        const d = Math.hypot(m.x - wx, m.y - wy)
-        if (d <= 13 && (!best || d < best.d)) best = { m, d }
+        const p = this.shownPos(m.id, m.x, m.y)
+        const d = Math.hypot(p.x - wx, p.y - wy)
+        if (d <= 26 && (!best || d < best.d)) best = { m, d }
       }
     }
     return best?.m ?? null
@@ -236,10 +249,9 @@ export class MultiplayerScene extends Phaser.Scene {
     if (!this.snap) return null
     let best: { a: AsteroidSnap; d: number } | null = null
     for (const a of this.snap.asteroids) {
-      const r = (SIZE_RADIUS[a.sizeCategory] ?? 8) + 10
-      const dx = a.x - wx
-      const dy = a.y - wy
-      const d = Math.sqrt(dx * dx + dy * dy)
+      const r = (SIZE_RADIUS[a.sizeCategory] ?? 8) * 2 + 20 // doubled hitbox — easier to grab
+      const p = this.shownPos(a.id, a.x, a.y)
+      const d = Math.hypot(p.x - wx, p.y - wy)
       if (d <= r && (!best || d < best.d)) best = { a, d }
     }
     return best?.a ?? null
@@ -359,11 +371,30 @@ export class MultiplayerScene extends Phaser.Scene {
       }
     }
 
-    // bases — faithful station look (inner disc + outer ring), tinted per corp
+    // bases — faithful station look: 3 hangars (outer, amber), 6 docks (inner, blue),
+    // an inner disc + outer ring, tinted per corp
     const me = get(mpYouCorpId)
     for (const c of this.snap.corps) {
       const dim = c.alive ? 1 : 0.25
       const mine = c.id === me
+      // 3 hangar bays (bigger, farther, amber)
+      for (let i = 0; i < HANGAR_COUNT; i++) {
+        const ang = (i / HANGAR_COUNT) * Math.PI * 2
+        const hx = c.baseX + Math.cos(ang) * HANGAR_RADIUS
+        const hy = c.baseY + Math.sin(ang) * HANGAR_RADIUS
+        g.lineStyle(2, 0xe8a23a, 0.5 * dim)
+        g.strokeCircle(hx, hy, 9)
+        g.fillStyle(0xe8a23a, 0.12 * dim)
+        g.fillCircle(hx, hy, 9)
+      }
+      // 6 docks (smaller, closer, blue)
+      for (let i = 0; i < DOCK_COUNT; i++) {
+        const ang = -Math.PI / 2 + (i / DOCK_COUNT) * Math.PI * 2
+        const dx = c.baseX + Math.cos(ang) * DOCK_RADIUS
+        const dy = c.baseY + Math.sin(ang) * DOCK_RADIUS
+        g.lineStyle(1.5, 0x88ccff, 0.55 * dim)
+        g.strokeCircle(dx, dy, 5)
+      }
       g.fillStyle(c.color, dim)
       g.fillCircle(c.baseX, c.baseY, BASE_INNER_R)
       g.lineStyle(mine ? 3 : 2, mine ? 0xffffff : 0x88ccff, dim)
@@ -378,12 +409,12 @@ export class MultiplayerScene extends Phaser.Scene {
       for (const s of c.ships) {
         let tx = s.x
         let ty = s.y
-        // park idle haulers just outside the base ring so they read clearly from the
-        // start (otherwise they sit dead-centre on the base disc and vanish into it)
+        // park idle haulers at the docks (first unoccupied, like SP) so they read
+        // clearly — otherwise they sit dead-centre on the base disc and vanish into it
         if (s.phase === 'idle') {
-          const ang = -Math.PI / 2 + parkIdx * 0.7
-          tx = c.baseX + Math.cos(ang) * (BASE_OUTER_R + 12)
-          ty = c.baseY + Math.sin(ang) * (BASE_OUTER_R + 12)
+          const ang = -Math.PI / 2 + ((parkIdx % DOCK_COUNT) / DOCK_COUNT) * Math.PI * 2
+          tx = c.baseX + Math.cos(ang) * DOCK_RADIUS
+          ty = c.baseY + Math.sin(ang) * DOCK_RADIUS
           parkIdx += 1
         }
         const p = this.smooth(s.id, tx, ty)
@@ -422,8 +453,8 @@ export class MultiplayerScene extends Phaser.Scene {
 
   private drawShip(x: number, y: number, angle: number, color: number): void {
     const g = this.gfx
-    const len = 15
-    const wid = 9
+    const len = 28
+    const wid = 17
     const ca = Math.cos(angle)
     const sa = Math.sin(angle)
     // nose

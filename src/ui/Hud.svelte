@@ -21,6 +21,12 @@
     if (saveTimer !== null) clearTimeout(saveTimer)
     saveTimer = setTimeout(() => { saveLabel = 'Save' }, 1000)
   }
+
+  function mainMenu(): void {
+    // save first, then return to the title screen (CONTINUE will resume from here)
+    commandQueue.update(q => [...q, { type: 'manualSave' }])
+    setTimeout(() => { location.href = location.pathname }, 250)
+  }
 </script>
 
 <div class="hud">
@@ -113,6 +119,7 @@
   {/each}
   <div class="hud-row hud-section">
     <button class="save-btn" on:click={manualSave}>{saveLabel}</button>
+    <button class="save-btn" on:click={mainMenu}>Main Menu</button>
   </div>
 </div>
 
