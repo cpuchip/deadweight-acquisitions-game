@@ -4,16 +4,23 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:server": "tsx watch server/index.ts",
     "build": "vite build",
+    "serve": "tsx server/index.ts",
+    "smoke": "tsx server/sim/smoke.ts",
     "compile": "tsc --noEmit",
     "test": "vitest run"
   },
   "dependencies": {
+    "nanoid": "^5",
     "phaser": "^3",
-    "svelte": "^5"
+    "svelte": "^5",
+    "ws": "^8"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^5",
+    "@types/ws": "^8",
+    "tsx": "^4",
     "typescript": "^5",
     "vite": "^8",
     "vitest": "^3"

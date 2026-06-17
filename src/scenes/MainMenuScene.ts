@@ -1,5 +1,6 @@
 import Phaser from 'phaser'
 import { GameSaveService } from '../services/GameSaveService'
+import { mpMode } from '../state/mpStore'
 
 export class MainMenuScene extends Phaser.Scene {
   constructor() {
@@ -7,6 +8,14 @@ export class MainMenuScene extends Phaser.Scene {
   }
 
   create(): void {
+    // Deep link: /?mp=1 (optionally &room=code) jumps straight into multiplayer,
+    // so a shared link lands friends in the lobby without touching the menu.
+    if (new URLSearchParams(location.search).has('mp')) {
+      mpMode.set('mp')
+      this.scene.start('MultiplayerScene')
+      return
+    }
+
     const { width, height } = this.scale
     const cx = width / 2
     const cy = height / 2
@@ -31,16 +40,32 @@ export class MainMenuScene extends Phaser.Scene {
 
     const hasSave = GameSaveService.hasSave()
 
+    let y = cy + 10
     if (hasSave) {
-      this.makeButton(cx, cy + 10, 'CONTINUE', () => {
+      this.makeButton(cx, y, 'CONTINUE', () => {
         this.scene.start('SpaceScene')
       })
+      y += 44
     }
 
-    this.makeButton(cx, cy + (hasSave ? 54 : 10), 'NEW GAME', () => {
+    this.makeButton(cx, y, 'NEW GAME', () => {
       GameSaveService.clear()
       this.scene.start('SpaceScene')
     })
+    y += 44
+
+    this.makeButton(cx, y, 'MULTIPLAYER', () => {
+      mpMode.set('mp')
+      this.scene.start('MultiplayerScene')
+    })
+
+    this.add
+      .text(cx, y + 40, 'competitive — last corp standing', {
+        fontFamily: 'monospace',
+        fontSize: '10px',
+        color: '#3a5a6a',
+      })
+      .setOrigin(0.5, 0.5)
   }
 
   private makeButton(x: number, y: number, label: string, onClick: () => void): void {

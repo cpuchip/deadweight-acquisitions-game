@@ -9,6 +9,13 @@ export default defineConfig({
     watch: {
       usePolling: true,
     },
+    // dev only: forward the multiplayer WebSocket to the tsx server (npm run dev:server)
+    proxy: {
+      '/ws': {
+        target: 'ws://localhost:8080',
+        ws: true,
+      },
+    },
   },
   test: {
     environment: 'node',
