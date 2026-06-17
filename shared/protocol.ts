@@ -64,6 +64,8 @@ export interface WorldSnapshot {
   /** server sim time in seconds */
   t: number
   phase: MatchPhase
+  /** host has paused the match — sim + quota clock are frozen */
+  paused: boolean
   /** seed used to generate the shared field (so clients can match RNG if needed) */
   seed: number
   worldRadius: number
@@ -91,6 +93,8 @@ export type GameCommand =
 export type ClientMessage =
   | { type: 'join'; name: string; room: string }
   | { type: 'start' } // host only: lobby -> running
+  | { type: 'pause' } // host only: toggle the match pause (freezes the sim + clock)
+  | { type: 'quit' } // forfeit + leave; the room is GC'd when it empties
   | { type: 'cmd'; cmd: GameCommand }
   | { type: 'ping' }
 

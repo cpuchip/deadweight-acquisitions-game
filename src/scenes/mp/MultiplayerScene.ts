@@ -28,6 +28,7 @@ export class MultiplayerScene extends Phaser.Scene {
   private dragStart = { x: 0, y: 0 }
   private camStart = { x: 0, y: 0 }
   private moved = 0
+  private dragButton = 0 // which mouse button started the drag (0 = left)
 
   constructor() {
     super({ key: 'MultiplayerScene' })
@@ -41,9 +42,13 @@ export class MultiplayerScene extends Phaser.Scene {
 
     this.unsub.push(mpSnapshot.subscribe((s) => (this.snap = s)))
 
+    // right-click drags the map without popping the browser context menu
+    this.input.mouse?.disableContextMenu()
+
     this.input.on('pointerdown', (p: Phaser.Input.Pointer) => {
       this.dragging = true
       this.moved = 0
+      this.dragButton = p.button
       this.dragStart = { x: p.x, y: p.y }
       this.camStart = { x: this.cameras.main.scrollX, y: this.cameras.main.scrollY }
     })
@@ -57,7 +62,8 @@ export class MultiplayerScene extends Phaser.Scene {
     })
     this.input.on('pointerup', (p: Phaser.Input.Pointer) => {
       this.dragging = false
-      if (this.moved <= CLICK_TOLERANCE) this.handleClick(p)
+      // only a LEFT click selects/claims; right/middle are pan-only
+      if (this.moved <= CLICK_TOLERANCE && this.dragButton === 0) this.handleClick(p)
     })
     this.input.on('wheel', (_p: Phaser.Input.Pointer, _o: unknown, _dx: number, dy: number) => {
       const next = Phaser.Math.Clamp(this.cameras.main.zoom * (dy > 0 ? 0.9 : 1.1), 0.12, 1.5)

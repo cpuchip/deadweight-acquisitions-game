@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { mpSnapshot, mpYouCorpId, mpConnection, mpSelectedAsteroid, mpBasePanelOpen } from '../../state/mpStore'
-  import { sendCommand } from '../../net/mpClient'
+  import { mpSnapshot, mpYouCorpId, mpConnection, mpSelectedAsteroid, mpBasePanelOpen, mpIsHost } from '../../state/mpStore'
+  import { sendCommand, pauseMatch, quitMatch } from '../../net/mpClient'
   import type { CorpSnap, AsteroidSnap } from '../../../shared/protocol'
 
   function hex(c: number): string {
@@ -37,6 +37,12 @@
   function openBase(): void {
     mpBasePanelOpen.set(true)
   }
+  function pause(): void {
+    pauseMatch()
+  }
+  function quit(): void {
+    quitMatch()
+  }
   function claim(a: AsteroidSnap): void {
     if (a.claimedBy === $mpYouCorpId) sendCommand({ kind: 'undesignate', asteroidId: a.id })
     else if (!a.claimedBy) sendCommand({ kind: 'designate', asteroidId: a.id })
@@ -57,7 +63,9 @@
     </div>
     <div class="cell wide">
       <span class="k">DEADLINE</span>
-      <span class="v" class:urgent={countdown < 15}>{clock(countdown)}</span>
+      <span class="v" class:urgent={countdown < 15 && !world.paused} class:paused={world.paused}>
+        {world.paused ? '❚❚ PAUSED' : clock(countdown)}
+      </span>
     </div>
     {#if me}
       <div class="cell">
@@ -68,6 +76,12 @@
         <span class="v" style="color:{hex(me.color)}">{me.periodTonnage} / {world.quota} t</span>
       </div>
     {/if}
+    <div class="controls">
+      {#if $mpIsHost && world.phase === 'running'}
+        <button class="ctl" on:click={pause}>{world.paused ? '▶ Resume' : '❚❚ Pause'}</button>
+      {/if}
+      <button class="ctl quit" on:click={quit}>✕ Quit</button>
+    </div>
   </div>
 
   <!-- scoreboard -->
@@ -179,6 +193,37 @@
   }
   .v.credits {
     color: #ffd766;
+  }
+  .v.paused {
+    color: #ffcc44;
+  }
+  .controls {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0 12px;
+    pointer-events: auto;
+  }
+  .ctl {
+    background: rgba(40, 60, 90, 0.7);
+    border: 1px solid #2a4a6a;
+    border-radius: 5px;
+    color: #cfe6f2;
+    font-family: monospace;
+    font-size: 11px;
+    padding: 5px 10px;
+    cursor: pointer;
+  }
+  .ctl:hover {
+    background: rgba(60, 90, 130, 0.8);
+  }
+  .ctl.quit {
+    border-color: #6a3a3a;
+    color: #ffaa99;
+  }
+  .ctl.quit:hover {
+    background: rgba(90, 40, 40, 0.7);
   }
   .v.urgent {
     color: #ff5544;

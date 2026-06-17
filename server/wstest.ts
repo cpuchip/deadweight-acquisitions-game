@@ -111,6 +111,23 @@ async function main(): Promise<void> {
   if (ast) assert(ast.claimedBy === alpha.corpId, 'contested asteroid stays with the first claimant')
   else console.log('  (asteroid already mined out — claim-contest check skipped)')
 
+  // pause (host only) freezes the sim clock
+  send(alpha.ws, { type: 'pause' })
+  await sleep(700)
+  assert(alpha.snap?.paused === true, 'host pause sets the paused flag')
+  const tPause = alpha.snap!.t
+  await sleep(2000)
+  assert(Math.abs(alpha.snap!.t - tPause) < 0.3, 'paused freezes the sim clock')
+  send(alpha.ws, { type: 'pause' }) // resume
+  await sleep(700)
+  assert(alpha.snap?.paused === false, 'host can resume')
+
+  // quit forfeits the corp (removed from the race)
+  send(beta.ws, { type: 'quit' })
+  await sleep(700)
+  const betaCorp = alpha.snap?.corps.find((c) => c.id === beta.corpId)
+  assert(!!betaCorp && !betaCorp.alive, 'quitting forfeits the corp')
+
   alpha.ws.close()
   beta.ws.close()
 }

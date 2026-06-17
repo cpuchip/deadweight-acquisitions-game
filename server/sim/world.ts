@@ -72,6 +72,7 @@ export class World {
   readonly seed: number
   t = 0
   phase: MatchPhase = 'lobby'
+  paused = false
   period = 0
   quota = 0
   periodEndsAt = 0
@@ -229,8 +230,20 @@ export class World {
 
   // ---- simulation ----
 
+  setPaused(v: boolean): void {
+    if (this.phase === 'running') this.paused = v
+  }
+
+  /** A corp leaves the match — forfeits (removed from the race), claims released. */
+  forfeit(corpId: string): void {
+    const c = this.corps.get(corpId)
+    if (!c || !c.alive) return
+    this.liquidate(c)
+    this.pushLog(`${c.name} left the match.`)
+  }
+
   tick(dt: number): void {
-    if (this.phase !== 'running') return
+    if (this.phase !== 'running' || this.paused) return
     this.t += dt
 
     for (const corp of this.corps.values()) {
@@ -474,6 +487,7 @@ export class World {
     return {
       t: this.t,
       phase: this.phase,
+      paused: this.paused,
       seed: this.seed,
       worldRadius: WORLD_RADIUS,
       period: this.period,

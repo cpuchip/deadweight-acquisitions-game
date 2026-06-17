@@ -50,6 +50,12 @@ export class Room {
       case 'start':
         this.startMatch(ws)
         break
+      case 'pause':
+        this.pauseMatch(ws)
+        break
+      case 'quit':
+        this.quitMatch(ws)
+        break
       case 'cmd': {
         const m = this.members.get(ws)
         if (m) this.world.applyCommand(m.corpId, msg.cmd)
@@ -117,6 +123,25 @@ export class Room {
     }
     this.world.start()
     this.broadcastLobby() // clients flip to the match view on phase change
+  }
+
+  private pauseMatch(ws: WebSocket): void {
+    const m = this.members.get(ws)
+    if (!m) return
+    if (this.hostCorpId() !== m.corpId) {
+      send(ws, { type: 'error', message: 'Only the host can pause the match.' })
+      return
+    }
+    this.world.setPaused(!this.world.paused)
+  }
+
+  private quitMatch(ws: WebSocket): void {
+    const m = this.members.get(ws)
+    if (!m) return
+    this.world.forfeit(m.corpId) // remove the corp from the race
+    this.order = this.order.filter((id) => id !== m.corpId) // pass the host on
+    // the client reloads after quitting; the socket close removes the member and,
+    // when the room empties, the registry GCs it (the match dies on the server)
   }
 
   private bind(ws: WebSocket, corpId: string, name: string): void {

@@ -81,6 +81,19 @@ export function startMatch(): void {
   send({ type: 'start' })
 }
 
+export function pauseMatch(): void {
+  send({ type: 'pause' })
+}
+
+export function quitMatch(): void {
+  send({ type: 'quit' })
+  // let the quit message flush, then drop back to the menu
+  setTimeout(() => {
+    disconnect()
+    location.href = location.pathname
+  }, 150)
+}
+
 export function sendCommand(cmd: GameCommand): void {
   send({ type: 'cmd', cmd })
 }
