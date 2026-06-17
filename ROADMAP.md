@@ -141,15 +141,29 @@ on push is fixed (GitHub App granted access to the repo).
   COMPANY_ASTEROID_MAX_COUNT), using Dave's generateCompanyAsteroid. Gold halo in-scene +
   gold minimap dot; AsteroidSnap.isCompany. smoke 28/28 + wstest + prod.
 
-### Remaining to v7 (each its own tested commit; break down as needed)
-- **Keplerian orbiting** — asteroids drift on their orbits (ω = ORBITAL_K / r^1.5, already
-  on every asteroid); deployed miners track their moving rock. (next)
-- **Multiple miners per hauler** (milk-run) — a hauler carries up to N miners out, deploys
-  across a cluster, shuttles from it. Efficiency/economy lever.
-- **v6 fuel / battery / condition** — hauler thruster fuel + battery; miner battery +
-  condition degradation + station repair; refuel/recharge fees. (Dave: HAULER_FUEL_MAX,
-  MINER_BATTERY_MAX, conditionPenaltyFraction, 'station-repair'.)
-- **v6 station services** — docks (fast transfer) vs hangars (slow service), owned vs
-  public fees, pressurization.
-- **v7 room persistence** (snapshot → disk, reconnect-resume) + **lobby chat** +
-  **spectator/camera-framing polish**.
+- **v7: Keplerian orbiting COMPLETE 2026-06-17 (`9fb0977`).** The field drifts (ω =
+  ORBITAL_K / r^1.5); deployed miners + docked haulers ride their rock. smoke 30/30 +
+  wstest (over-the-wire orbit-drift assert) + prod.
+- **v7: room chat COMPLETE 2026-06-17 (`03a839d`).** Lobby + match chat; collapsible
+  bottom-left panel; server broadcasts trimmed/capped lines tagged with corp color.
+  wstest 21/21 + prod.
+- **build stamp COMPLETE 2026-06-17 (`1a76ba2`) — dev infra.** `__BUILD_SHA__` (git short
+  hash) on the menu footer + a corner badge; `GET /version` returns it; `dist/version.txt`.
+  Now deploy-verify = `curl /version` (definitive, esp. for server-only changes). Dockerfile
+  installs git + un-ignores .git to read the commit, then removes it.
+
+### Remaining to v7 — DECISION 2026-06-17 (AskUserQuestion): **FULL FAITHFUL PARITY — all of it**
+Michael chose to implement every SP system faithfully (Dave's constants), **auto-managed**
+so the auto-dispatch race stays ease-of-life (no micro). Tension acknowledged + overridden:
+much of it is auto-managed/invisible in the auto-sim, but he wants the full parity. So the
+systems exist + are VISIBLE (bars + credit-sink fees in the log), auto-serviced at base,
+and tuned MP-safe (never strand). Phase breakdown (each its own tested commit):
+- **(a) hauler fuel + battery** — consume while thrusting/operating; auto-refuel + recharge
+  at base for a credit fee (station service); visible bars. MP-safe capacity (no stranding).
+- **(b) miner condition + battery + repair** — miners wear with use (condition→mining-rate
+  penalty) + drain battery; auto-repaired/recharged at base via a credit fee, or replaced.
+- **(c) station services** — make the base fees explicit (refuel/repair/dock), owned-base
+  free-ish vs the faithful fee model; pressurization flavor.
+- **(d) multiple miners per hauler** — Dave's 2-miner bay; milk-run deploy across a cluster.
+- **(e) room persistence** — World snapshot → disk; reconnect-resume across a server restart.
+- **(f) spectator + camera-framing polish + a balance pass**, then call it **v7 deployed**.

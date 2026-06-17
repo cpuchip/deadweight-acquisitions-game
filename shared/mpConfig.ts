@@ -51,6 +51,15 @@ export const NET_COLLECT_SECONDS = 0.8 // dwell to collect nets at the asteroid
 
 export const ARRIVAL_RADIUS = 28 // world units, "close enough" to a point
 
+// --- v6 hauler resources (mirror Dave's Ship.ts; auto-serviced at base, MP-safe) ---
+// Fuel drains while thrusting and tops off (for a fee) at base on every return, so it
+// never strands in the deploy→shuttle→base loop — it's a visible bar + a credit sink.
+export const HAULER_FUEL_MAX = 300
+export const HAULER_FUEL_DRAIN_PER_SEC = 3 // while moving
+export const HAULER_BATTERY_MAX = 100
+export const HAULER_BATTERY_CHARGE_RATE = 0.5 // recharges while not thrusting (parked/coasting)
+export const REFUEL_FEE_PER_UNIT = 0.15 // station service fee, credits per fuel unit topped off
+
 // --- field layout (faithful: planet at origin, bases in GEO orbit around it) ---
 export const PLANET_RADIUS = 160 // visual planet radius (SP planet sits at 0,0)
 export const BASE_ORBIT_RADIUS = 650 // bases sit this far from the planet (SP base is at y=650)

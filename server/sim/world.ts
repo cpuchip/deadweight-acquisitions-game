@@ -46,6 +46,11 @@ import {
   NET_LEAKAGE,
   MINER_DEPLOY_SECONDS,
   NET_COLLECT_SECONDS,
+  HAULER_FUEL_MAX,
+  HAULER_FUEL_DRAIN_PER_SEC,
+  HAULER_BATTERY_MAX,
+  HAULER_BATTERY_CHARGE_RATE,
+  REFUEL_FEE_PER_UNIT,
 } from '../../shared/mpConfig'
 import type {
   GameCommand,
@@ -73,6 +78,8 @@ interface SimShip {
   targetOrphanId: string | null
   /** carrying a miner out to deploy */
   carryingMiner: boolean
+  fuel: number
+  battery: number
   timer: number
 }
 
@@ -211,6 +218,8 @@ export class World {
       targetAsteroidId: null,
       targetOrphanId: null,
       carryingMiner: false,
+      fuel: HAULER_FUEL_MAX,
+      battery: HAULER_BATTERY_MAX,
       timer: 0,
     }
   }
@@ -496,6 +505,10 @@ export class World {
   }
 
   private updateShip(corp: SimCorp, ship: SimShip, dt: number): void {
+    // battery tops up while not thrusting (faithful to Dave; haulers self-power)
+    if (ship.phase !== 'to-asteroid' && ship.phase !== 'to-orphan' && ship.phase !== 'to-base') {
+      ship.battery = Math.min(HAULER_BATTERY_MAX, ship.battery + HAULER_BATTERY_CHARGE_RATE * dt)
+    }
     switch (ship.phase) {
       case 'idle':
         return
@@ -638,6 +651,7 @@ export class World {
           ship.timer = UNLOAD_SECONDS // storage full — wait, retry (player must sell)
           return
         }
+        this.refuel(corp, ship) // dock service: top off fuel (for a fee) + recharge
         // go back to the miner if it's still deployed, else idle
         const stillMining = ship.targetAsteroidId && this.minerAt(corp, ship.targetAsteroidId)
         if (stillMining) {
@@ -649,6 +663,17 @@ export class World {
         return
       }
     }
+  }
+
+  /** dock service at base: refuel the hauler (credit fee scales with what it burned)
+   * and recharge its battery. Faithful station service; never strands the hauler. */
+  private refuel(corp: SimCorp, ship: SimShip): void {
+    const need = HAULER_FUEL_MAX - ship.fuel
+    if (need > 0.5) {
+      corp.credits = Math.max(0, corp.credits - need * REFUEL_FEE_PER_UNIT)
+      ship.fuel = HAULER_FUEL_MAX
+    }
+    ship.battery = HAULER_BATTERY_MAX
   }
 
   private totalStored(corp: SimCorp): number {
@@ -684,6 +709,9 @@ export class World {
     const d = Math.sqrt(dx * dx + dy * dy)
     if (d <= ARRIVAL_RADIUS) return true
     ship.angle = Math.atan2(dy, dx)
+    // thrusting burns fuel (refilled for a fee at base every return — never strands;
+    // the more it travels, the bigger the refuel bill, so far rocks cost more to service)
+    ship.fuel = Math.max(0, ship.fuel - HAULER_FUEL_DRAIN_PER_SEC * dt)
     const step = SHIP_SPEED * dt
     if (step >= d) {
       ship.x = tx
@@ -814,6 +842,8 @@ export class World {
         cargoResource: s.cargoResource,
         targetAsteroidId: s.targetAsteroidId,
         carryingMiner: s.carryingMiner,
+        fuel: Math.round(s.fuel),
+        battery: Math.round(s.battery),
       })),
     }))
     return {

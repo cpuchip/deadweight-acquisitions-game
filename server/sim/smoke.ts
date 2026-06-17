@@ -4,7 +4,7 @@
 
 import { World } from './world'
 import { RESOURCE_SELL_PRICES, type ResourceType } from '../../src/world/worldConfig'
-import { SIM_HZ, MINER_COST, SHIP_COST } from '../../shared/mpConfig'
+import { SIM_HZ, MINER_COST, SHIP_COST, HAULER_FUEL_MAX } from '../../shared/mpConfig'
 
 const dt = 1 / SIM_HZ
 let failures = 0
@@ -265,6 +265,38 @@ assert(final.asteroids.some((a) => a.isCompany), 'company asteroids are flagged 
   const rBefore = Math.hypot(bx, by)
   const rAfter = Math.hypot(after.x, after.y)
   assert(Math.abs(rBefore - rAfter) < 1, 'orbital radius is preserved — the drift is angular')
+}
+
+// ---- v6: hauler fuel + refuel fee (auto-managed station service) ----
+{
+  const w = new World(555)
+  w.addCorp('F', 'Fuel', 0x55ccff)
+  w.start()
+  w.applyCommand('F', { kind: 'buyMiner' })
+  const s0 = w.snapshot()
+  const fbase = s0.corps[0]
+  let far: { id: string; d: number } | null = null
+  for (const a of s0.asteroids) {
+    if (a.sizeCategory !== 'large') continue
+    const d = Math.hypot(a.x - fbase.baseX, a.y - fbase.baseY)
+    if (!far || d > far.d) far = { id: a.id, d }
+  }
+  w.applyCommand('F', { kind: 'designate', asteroidId: far!.id })
+  const startCredits = w.snapshot().corps[0].credits
+  let minFuel = HAULER_FUEL_MAX
+  let delivered = false
+  for (let i = 0; i < 130 * SIM_HZ; i++) {
+    w.tick(dt)
+    const s = w.snapshot().corps[0]
+    minFuel = Math.min(minFuel, s.ships[0].fuel)
+    if (s.tonnage > 0) {
+      delivered = true
+      break
+    }
+  }
+  assert(minFuel < HAULER_FUEL_MAX, 'a hauler burns fuel while traveling')
+  assert(delivered, 'the fuelled hauler completed the deploy→deliver loop (no stranding)')
+  assert(w.snapshot().corps[0].credits < startCredits, 'returning to base charged a refuel fee (station service credit sink)')
 }
 
 if (failures > 0) {

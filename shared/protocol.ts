@@ -76,6 +76,10 @@ export interface ShipSnap {
   targetAsteroidId: string | null
   /** true while carrying a miner out to deploy it */
   carryingMiner: boolean
+  /** thruster fuel remaining (0..HAULER_FUEL_MAX); tops off at base for a fee */
+  fuel: number
+  /** battery charge (0..HAULER_BATTERY_MAX); recharges while parked */
+  battery: number
 }
 
 export interface CorpSnap {

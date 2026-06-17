@@ -1,7 +1,7 @@
 <script lang="ts">
   import { mpSnapshot, mpYouCorpId, mpConnection, mpSelectedAsteroid, mpSelectedShip, mpSelectedMiner, mpBasePanelOpen, mpIsHost, mpQuickClaim } from '../../state/mpStore'
   import { sendCommand, pauseMatch, quitMatch } from '../../net/mpClient'
-  import { MAX_CARGO_LEVEL, CARGO_UPGRADE_COSTS, CARGO_CAPACITY_TIERS } from '../../../shared/mpConfig'
+  import { MAX_CARGO_LEVEL, CARGO_UPGRADE_COSTS, CARGO_CAPACITY_TIERS, HAULER_FUEL_MAX, HAULER_BATTERY_MAX } from '../../../shared/mpConfig'
   import type { CorpSnap, AsteroidSnap, ShipSnap, MinerSnap, WorldSnapshot } from '../../../shared/protocol'
 
   function hex(c: number): string {
@@ -187,6 +187,10 @@
       </div>
       <div class="sel-row"><span>state</span><span>{SHIP_STATE[selShip.ship.phase] ?? selShip.ship.phase}</span></div>
       <div class="sel-row"><span>cargo</span><span>{selShip.ship.cargo} / {selShip.ship.cargoCapacity}{selShip.ship.cargoResource ? ' · ' + selShip.ship.cargoResource : ''}</span></div>
+      <div class="sel-row"><span>fuel</span><span>{selShip.ship.fuel} / {HAULER_FUEL_MAX}</span></div>
+      <div class="meter"><span class="meter-fill fuel" style="width:{(selShip.ship.fuel / HAULER_FUEL_MAX) * 100}%"></span></div>
+      <div class="sel-row"><span>battery</span><span>{selShip.ship.battery} / {HAULER_BATTERY_MAX}</span></div>
+      <div class="meter"><span class="meter-fill batt" style="width:{(selShip.ship.battery / HAULER_BATTERY_MAX) * 100}%"></span></div>
       {#if selShip.ship.carryingMiner}
         <div class="sel-row"><span>bay</span><span>carrying a miner</span></div>
       {/if}
@@ -452,6 +456,23 @@
   }
   .sel-row .hot {
     color: #ffaa44;
+  }
+  .meter {
+    height: 4px;
+    background: #16242e;
+    border-radius: 3px;
+    overflow: hidden;
+    margin: 1px 0 3px;
+  }
+  .meter-fill {
+    display: block;
+    height: 100%;
+  }
+  .meter-fill.fuel {
+    background: #e8a23a;
+  }
+  .meter-fill.batt {
+    background: #4ad0c0;
   }
   .sel {
     position: absolute;
