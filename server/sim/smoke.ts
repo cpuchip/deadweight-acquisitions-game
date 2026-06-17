@@ -26,7 +26,7 @@ assert(world.phase === 'lobby', 'starts in lobby')
 // money gate: a fresh corp has no miners, so a claim cannot dispatch yet
 {
   const c = world.snapshot().corps[0]
-  assert(c.minerCount === 0 && c.ships.length === 1, 'corp starts with 1 hauler, 0 miners (faithful)')
+  assert(c.minerCount === 1 && c.ships.length === 1, 'corp starts with 1 hauler + 1 pre-loaded miner (faithful to SP)')
 }
 world.start()
 assert(world.phase === 'running', 'start() -> running')
@@ -113,8 +113,8 @@ console.log('winner:', final.winnerCorpId, 'phase:', final.phase)
 
 assert(everMined, 'miners deployed at asteroids (the deep loop ran)')
 assert(final.corps.find((c) => c.id === AGGRESSIVE)!.tonnage > 0, 'aggressive corp shuttled ore to base (tonnage)')
-assert(final.corps.find((c) => c.id === AGGRESSIVE)!.minerCount > 0, 'aggressive corp bought miners (money gate)')
-assert(final.corps.find((c) => c.id === PASSIVE)!.tonnage === 0, 'passive corp (no miners) delivered nothing — the money gate held')
+assert(final.corps.find((c) => c.id === AGGRESSIVE)!.minerCount > 1, 'aggressive corp bought miners beyond the starter (money gate)')
+assert(final.corps.find((c) => c.id === PASSIVE)!.tonnage === 0, 'passive corp (never claimed) delivered nothing — its starter miner stayed in the bay')
 assert(liquidations >= 1, 'at least one corp was liquidated at a quota deadline')
 assert(firstLiquidatedId === PASSIVE, 'the passive (no-miner) corp was liquidated first')
 assert(

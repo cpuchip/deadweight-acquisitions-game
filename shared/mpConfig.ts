@@ -4,7 +4,7 @@
 
 // --- match cadence ---
 export const SIM_HZ = 20 // server simulation ticks per second
-export const SNAPSHOT_HZ = 10 // world snapshots broadcast per second
+export const SNAPSHOT_HZ = 20 // world snapshots broadcast per second (client also interpolates)
 
 // --- quota / elimination ---
 // Period 1 is a generous SETUP window — you start with 0 miners and must buy +
@@ -25,7 +25,7 @@ export const QUOTA_GROWTH = 1.3 // floor multiplies by this each period
 // --- starting corp (mirrors Dave's SP: 1 hauler, 0 miners, 750 credits) ---
 export const STARTING_CREDITS = 750 // Base.STARTING_CREDITS
 export const STARTING_SHIPS = 1 // SP spawns a single Hauler-01
-export const STARTING_MINERS = 0 // you must BUY miners before you can mine
+export const STARTING_MINERS = 1 // SP pre-loads one AutoMiner on the starter hauler; buy more for credits
 export const SHIP_COST = 500 // Base.SHIP_COMMISSION_COST
 export const MINER_COST = 300 // AutoMiner.AUTOMINER_PURCHASE_COST
 export const STORAGE_CAPACITY = 2000 // Base.BASE_STORAGE_CAPACITY

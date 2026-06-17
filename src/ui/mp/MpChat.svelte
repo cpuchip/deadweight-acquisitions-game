@@ -5,7 +5,7 @@
 
   let draft = ''
   let list: HTMLDivElement
-  let open = true
+  let open = false // collapsed by default — a small bar that expands on click
 
   function hex(c: number): string {
     return '#' + (c >>> 0).toString(16).padStart(6, '0')
@@ -62,9 +62,9 @@
 <style>
   .chat {
     position: absolute;
-    bottom: 12px;
-    left: 12px;
-    width: 264px;
+    top: 372px; /* right edge, below the standings — clear of the base menu (bottom-left) */
+    right: 10px;
+    width: 250px;
     background: rgba(10, 16, 24, 0.86);
     border: 1px solid #1c2c38;
     border-radius: 8px;

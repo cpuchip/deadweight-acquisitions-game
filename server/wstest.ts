@@ -75,7 +75,7 @@ async function main(): Promise<void> {
 
   // Alpha claims the asteroid nearest its base, to keep the round trip short.
   const me = alpha.snap!.corps.find((c) => c.id === alpha.corpId)!
-  assert(me.minerCount === 0 && me.ships.length === 1, 'Alpha starts with 1 hauler, 0 miners')
+  assert(me.minerCount === 1 && me.ships.length === 1, 'Alpha starts with 1 hauler + 1 pre-loaded miner')
   let nearest: { id: string; d: number } | null = null
   for (const a of alpha.snap!.asteroids) {
     const d = Math.hypot(a.x - me.baseX, a.y - me.baseY)
@@ -83,17 +83,9 @@ async function main(): Promise<void> {
   }
   assert(!!nearest, 'found an asteroid to claim')
 
-  // MONEY GATE: claim with no miner -> nothing should dispatch
+  // claiming a rock deploys the pre-loaded starter miner — a hauler dispatches to carry it out
   send(alpha.ws, { type: 'cmd', cmd: { kind: 'designate', asteroidId: nearest!.id } })
-  await sleep(1500)
-  {
-    const a = alpha.snap?.corps.find((c) => c.id === alpha.corpId)
-    assert(!a?.ships.some((s) => s.phase !== 'idle'), 'no miner -> claim does NOT auto-dispatch (money gate holds)')
-  }
-
-  // buy a miner -> the existing claim should now be serviced
-  send(alpha.ws, { type: 'cmd', cmd: { kind: 'buyMiner' } })
-  console.log(`  Alpha bought a miner; claim is ${nearest!.id} (~${Math.round(nearest!.d)} units away)`)
+  console.log(`  Alpha claimed ${nearest!.id} (~${Math.round(nearest!.d)} units away)`)
   let dispatched = false
   for (let i = 0; i < 20; i++) {
     await sleep(500)
@@ -103,7 +95,9 @@ async function main(): Promise<void> {
       break
     }
   }
-  assert(dispatched, 'after buying a miner, a hauler dispatches to the claim')
+  assert(dispatched, 'claiming a rock dispatches a hauler to deploy the starter miner')
+  // buying another miner lets you work a second rock (the money side of the economy)
+  send(alpha.ws, { type: 'cmd', cmd: { kind: 'buyMiner' } })
 
   // the deep loop (deploy -> net -> shuttle) should bank tonnage; give it room
   let earned = false

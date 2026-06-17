@@ -28,6 +28,29 @@ export class MultiplayerScene extends Phaser.Scene {
   private framedOnDeath = false
   private baseLabels = new Map<string, Phaser.GameObjects.Text>()
 
+  // smoothing: ease each moving object's displayed position toward the latest snapshot,
+  // so 20Hz snapshots render as continuous motion (SP runs its sim at 60fps locally).
+  private disp = new Map<string, { x: number; y: number }>()
+  private seen = new Set<string>()
+  private stars: { x: number; y: number; a: number; r: number }[] = []
+
+  /** eased display position for an entity id, snapping on a big jump (deploy/respawn) */
+  private smooth(id: string, tx: number, ty: number): { x: number; y: number } {
+    this.seen.add(id)
+    let p = this.disp.get(id)
+    if (!p) {
+      p = { x: tx, y: ty }
+      this.disp.set(id, p)
+    } else if (Math.abs(tx - p.x) + Math.abs(ty - p.y) > 500) {
+      p.x = tx
+      p.y = ty
+    } else {
+      p.x += (tx - p.x) * 0.35
+      p.y += (ty - p.y) * 0.35
+    }
+    return p
+  }
+
   // pan/zoom drag bookkeeping
   private dragging = false
   private dragStart = { x: 0, y: 0 }
@@ -44,6 +67,17 @@ export class MultiplayerScene extends Phaser.Scene {
     this.gfx = this.add.graphics()
     this.cameras.main.setZoom(0.32)
     this.cameras.main.centerOn(0, 0)
+
+    // a world-space starfield for depth + motion reference (faithful to SP)
+    this.stars = []
+    for (let i = 0; i < 520; i++) {
+      this.stars.push({
+        x: (Math.random() * 2 - 1) * 4200,
+        y: (Math.random() * 2 - 1) * 4200,
+        a: 0.15 + Math.random() * 0.55,
+        r: 2 + Math.random() * 3,
+      })
+    }
 
     this.unsub.push(mpSnapshot.subscribe((s) => (this.snap = s)))
 
@@ -214,7 +248,14 @@ export class MultiplayerScene extends Phaser.Scene {
   update(): void {
     const g = this.gfx
     g.clear()
+    this.seen.clear()
     if (!this.snap) return
+
+    // starfield (drawn first, behind everything)
+    for (const s of this.stars) {
+      g.fillStyle(0xffffff, s.a)
+      g.fillCircle(s.x, s.y, s.r)
+    }
 
     // recenter once on the player's base
     if (!this.centered) {
@@ -253,20 +294,21 @@ export class MultiplayerScene extends Phaser.Scene {
     // asteroids
     for (const a of this.snap.asteroids) {
       const r = SIZE_RADIUS[a.sizeCategory] ?? 8
+      const p = this.smooth(a.id, a.x, a.y)
       // company asteroids (the richer arrivals) wear a soft gold halo
       if (a.isCompany) {
         g.lineStyle(1.5, 0xffd766, 0.55)
-        g.strokeCircle(a.x, a.y, r + 4)
+        g.strokeCircle(p.x, p.y, r + 4)
       }
       g.fillStyle(RESOURCE_COLORS[a.resourceType] ?? 0x888888, 1)
-      g.fillCircle(a.x, a.y, r)
+      g.fillCircle(p.x, p.y, r)
       if (a.claimedBy) {
         g.lineStyle(2, colorOf.get(a.claimedBy) ?? 0xffffff, 0.9)
-        g.strokeCircle(a.x, a.y, r + 3)
+        g.strokeCircle(p.x, p.y, r + 3)
       }
       if (a.id === selected) {
         g.lineStyle(2, 0xffffff, 1)
-        g.strokeCircle(a.x, a.y, r + 6)
+        g.strokeCircle(p.x, p.y, r + 6)
       }
     }
 
@@ -276,27 +318,28 @@ export class MultiplayerScene extends Phaser.Scene {
     for (const c of this.snap.corps) {
       if (!c.alive) continue
       for (const m of c.miners) {
+        const p = this.smooth(m.id, m.x, m.y)
         // beacon: a net-starved (full) or depleted miner throbs a ring for recovery
         if (m.state === 'net-starved' || m.state === 'depleted') {
           const beacon = m.state === 'net-starved' ? 0xffaa44 : 0x888888
           g.lineStyle(2, beacon, 0.25 + 0.55 * pulse)
-          g.strokeCircle(m.x, m.y, 9 + pulse * 6)
+          g.strokeCircle(p.x, p.y, 9 + pulse * 6)
         }
         g.fillStyle(c.color, 1)
-        g.fillRect(m.x - 4, m.y - 4, 8, 8)
+        g.fillRect(p.x - 4, p.y - 4, 8, 8)
         g.lineStyle(1.5, m.state === 'net-starved' ? 0xffaa44 : m.state === 'depleted' ? 0x888888 : 0xffffff, 0.9)
-        g.strokeRect(m.x - 5, m.y - 5, 10, 10)
+        g.strokeRect(p.x - 5, p.y - 5, 10, 10)
         // selection ring
         if (m.id === selectedMiner) {
           g.lineStyle(2, 0xffffff, 1)
-          g.strokeCircle(m.x, m.y, 13)
+          g.strokeCircle(p.x, p.y, 13)
         }
         // tethered nets ringing the miner
         g.fillStyle(0xffcc44, 0.95)
         const n = Math.min(m.netsReady, 4)
         for (let i = 0; i < n; i++) {
           const ang = (i / 4) * Math.PI * 2 - Math.PI / 2
-          g.fillCircle(m.x + Math.cos(ang) * 11, m.y + Math.sin(ang) * 11, 2.2)
+          g.fillCircle(p.x + Math.cos(ang) * 11, p.y + Math.sin(ang) * 11, 2.2)
         }
       }
     }
@@ -305,12 +348,13 @@ export class MultiplayerScene extends Phaser.Scene {
     for (const c of this.snap.corps) {
       if (!c.alive || !c.orphanNets) continue
       for (const o of c.orphanNets) {
+        const p = this.smooth(o.id, o.x, o.y)
         g.lineStyle(1, 0xffcc44, 0.35 + 0.35 * pulse)
-        g.strokeCircle(o.x, o.y, 8 + pulse * 3)
+        g.strokeCircle(p.x, p.y, 8 + pulse * 3)
         g.fillStyle(0xffcc44, 0.85)
         for (let i = 0; i < 4; i++) {
           const ang = (i / 4) * Math.PI * 2 + this.time.now / 900
-          g.fillCircle(o.x + Math.cos(ang) * 5, o.y + Math.sin(ang) * 5, 1.8)
+          g.fillCircle(p.x + Math.cos(ang) * 5, p.y + Math.sin(ang) * 5, 1.8)
         }
       }
     }
@@ -330,16 +374,33 @@ export class MultiplayerScene extends Phaser.Scene {
     // ships
     for (const c of this.snap.corps) {
       if (!c.alive) continue
+      let parkIdx = 0
       for (const s of c.ships) {
-        this.drawShip(s.x, s.y, s.angle, c.color)
+        let tx = s.x
+        let ty = s.y
+        // park idle haulers just outside the base ring so they read clearly from the
+        // start (otherwise they sit dead-centre on the base disc and vanish into it)
+        if (s.phase === 'idle') {
+          const ang = -Math.PI / 2 + parkIdx * 0.7
+          tx = c.baseX + Math.cos(ang) * (BASE_OUTER_R + 12)
+          ty = c.baseY + Math.sin(ang) * (BASE_OUTER_R + 12)
+          parkIdx += 1
+        }
+        const p = this.smooth(s.id, tx, ty)
+        this.drawShip(p.x, p.y, s.angle, c.color)
         if (s.carryingMiner) {
           g.fillStyle(0xffffff, 0.95)
-          g.fillRect(s.x - 2, s.y - 2, 4, 4) // the miner it's carrying out
+          g.fillRect(p.x - 3, p.y - 3, 6, 6) // the miner it's carrying out
         } else if (s.cargo > 0) {
           g.fillStyle(0xffcc44, 0.95)
-          g.fillCircle(s.x, s.y, 2.2) // ore nets aboard
+          g.fillCircle(p.x, p.y, 3) // ore nets aboard
         }
       }
+    }
+
+    // drop eased positions for entities that no longer exist (mined out / recovered)
+    if (this.disp.size > this.seen.size) {
+      for (const k of this.disp.keys()) if (!this.seen.has(k)) this.disp.delete(k)
     }
   }
 
@@ -361,8 +422,8 @@ export class MultiplayerScene extends Phaser.Scene {
 
   private drawShip(x: number, y: number, angle: number, color: number): void {
     const g = this.gfx
-    const len = 9
-    const wid = 6
+    const len = 15
+    const wid = 9
     const ca = Math.cos(angle)
     const sa = Math.sin(angle)
     // nose
@@ -375,5 +436,8 @@ export class MultiplayerScene extends Phaser.Scene {
     const by = y - sa * (len * 0.5)
     g.fillStyle(color, 1)
     g.fillTriangle(nx, ny, bx + px * wid, by + py * wid, bx - px * wid, by - py * wid)
+    // a light outline so the hull reads against the dark field AND against its own base
+    g.lineStyle(1.5, 0xffffff, 0.9)
+    g.strokeTriangle(nx, ny, bx + px * wid, by + py * wid, bx - px * wid, by - py * wid)
   }
 }
