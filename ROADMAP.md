@@ -158,12 +158,17 @@ so the auto-dispatch race stays ease-of-life (no micro). Tension acknowledged + 
 much of it is auto-managed/invisible in the auto-sim, but he wants the full parity. So the
 systems exist + are VISIBLE (bars + credit-sink fees in the log), auto-serviced at base,
 and tuned MP-safe (never strand). Phase breakdown (each its own tested commit):
-- **(a) hauler fuel + battery** — consume while thrusting/operating; auto-refuel + recharge
-  at base for a credit fee (station service); visible bars. MP-safe capacity (no stranding).
-- **(b) miner condition + battery + repair** — miners wear with use (condition→mining-rate
-  penalty) + drain battery; auto-repaired/recharged at base via a credit fee, or replaced.
-- **(c) station services** — make the base fees explicit (refuel/repair/dock), owned-base
-  free-ish vs the faithful fee model; pressurization flavor.
+- **(a) hauler fuel + battery DONE (`a495a2f`)** — fuel drains thrusting; auto-refuel at
+  base for a distance-scaled credit fee (never strands); battery recharges parked; bars in
+  the ship panel. smoke 33/33 + prod.
+- **(b) miner condition + battery + repair DONE (`2e82f13`)** — miners wear on-station
+  (condition→mining penalty below grace) + drain battery; the shuttling hauler auto-services
+  (recharge free + repair-for-a-fee when worn). Far rocks rack up real wear/repair, close
+  rocks stay serviced. Bars in the miner panel (worn=amber). smoke 35/35 + prod.
+- **(c) station services** — surface the service economy: a base-panel STATION section
+  listing the auto-services + fee rates + cumulative service spend. (Dock/hangar/public-fee/
+  pressurization are SP single-station internals that don't map to MP's one-base-per-corp —
+  the fee model IS the station service here.) (next)
 - **(d) multiple miners per hauler** — Dave's 2-miner bay; milk-run deploy across a cluster.
 - **(e) room persistence** — World snapshot → disk; reconnect-resume across a server restart.
 - **(f) spectator + camera-framing polish + a balance pass**, then call it **v7 deployed**.

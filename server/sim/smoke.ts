@@ -297,6 +297,7 @@ assert(final.asteroids.some((a) => a.isCompany), 'company asteroids are flagged 
   assert(minFuel < HAULER_FUEL_MAX, 'a hauler burns fuel while traveling')
   assert(delivered, 'the fuelled hauler completed the deploy→deliver loop (no stranding)')
   assert(w.snapshot().corps[0].credits < startCredits, 'returning to base charged a refuel fee (station service credit sink)')
+  assert(w.snapshot().corps[0].serviceSpend > 0, 'station-service spend is tracked (refuel/repair fees accumulate)')
 }
 
 // ---- v6: miner condition wear + hauler repair ----

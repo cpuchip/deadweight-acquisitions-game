@@ -1,7 +1,7 @@
 <script lang="ts">
   import { mpSnapshot, mpYouCorpId, mpConnection, mpBasePanelOpen } from '../../state/mpStore'
   import { sendCommand } from '../../net/mpClient'
-  import { SHIP_COST, MINER_COST, MAX_SHIPS_PER_CORP } from '../../../shared/mpConfig'
+  import { SHIP_COST, MINER_COST, MAX_SHIPS_PER_CORP, REFUEL_FEE_PER_UNIT, REPAIR_FEE_PER_POINT } from '../../../shared/mpConfig'
   import { RESOURCE_SELL_PRICES, type ResourceType } from '../../world/worldConfig'
 
   const RESOURCE_LABELS: Record<ResourceType, string> = {
@@ -71,6 +71,11 @@
       <span class="price">{MINER_COST}cr</span>
       <button class="btn" disabled={me.credits < MINER_COST} on:click={buyMiner}>Buy</button>
     </div>
+    <div class="sec">STATION SERVICES</div>
+    <div class="row svc"><span class="label">Refuel haulers</span><span class="price">auto · {REFUEL_FEE_PER_UNIT}cr/unit</span></div>
+    <div class="row svc"><span class="label">Repair + recharge miners</span><span class="price">auto · {REPAIR_FEE_PER_POINT}cr/pt</span></div>
+    <div class="row svc"><span class="label">Spent on services</span><span class="value credits">{me.serviceSpend}cr</span></div>
+
     <div class="sec">AUTOMATION</div>
     <div class="row buy">
       <span class="label">Auto-designate</span>

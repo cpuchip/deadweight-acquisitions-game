@@ -134,6 +134,8 @@ interface SimCorp {
   minersOwned: number
   deployedMiners: SimMiner[]
   orphanNets: SimOrphanNet[]
+  /** cumulative credits spent on station services (refuel + repair) */
+  serviceSpend: number
   claims: string[]
   shipCounter: number
   autoDesignate: boolean
@@ -195,6 +197,7 @@ export class World {
       minersOwned: STARTING_MINERS,
       deployedMiners: [],
       orphanNets: [],
+      serviceSpend: 0,
       claims: [],
       shipCounter: 0,
       autoDesignate: false,
@@ -699,8 +702,9 @@ export class World {
   private serviceMiner(corp: SimCorp, m: SimMiner): void {
     m.battery = MINER_BATTERY_MAX
     if (m.condition < CONDITION_GRACE_THRESHOLD) {
-      const restore = 1 - m.condition
-      corp.credits = Math.max(0, corp.credits - restore * REPAIR_FEE_PER_POINT)
+      const fee = (1 - m.condition) * REPAIR_FEE_PER_POINT
+      corp.credits = Math.max(0, corp.credits - fee)
+      corp.serviceSpend += fee
       m.condition = 1
     }
   }
@@ -710,7 +714,9 @@ export class World {
   private refuel(corp: SimCorp, ship: SimShip): void {
     const need = HAULER_FUEL_MAX - ship.fuel
     if (need > 0.5) {
-      corp.credits = Math.max(0, corp.credits - need * REFUEL_FEE_PER_UNIT)
+      const fee = need * REFUEL_FEE_PER_UNIT
+      corp.credits = Math.max(0, corp.credits - fee)
+      corp.serviceSpend += fee
       ship.fuel = HAULER_FUEL_MAX
     }
     ship.battery = HAULER_BATTERY_MAX
@@ -867,6 +873,7 @@ export class World {
         amount: Math.round(o.amount),
       })),
       autoDesignate: c.autoDesignate,
+      serviceSpend: Math.round(c.serviceSpend),
       tonnage: Math.round(c.tonnage),
       periodTonnage: Math.round(c.periodTonnage),
       alive: c.alive,

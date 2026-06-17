@@ -105,6 +105,8 @@ export interface CorpSnap {
   orphanNets: OrphanNetSnap[]
   /** auto-claim the best unclaimed asteroid when a miner + hauler are free */
   autoDesignate: boolean
+  /** cumulative credits spent on station services (refuel + repair) */
+  serviceSpend: number
   /** cumulative tons DELIVERED to base across the whole match */
   tonnage: number
   /** tons delivered in the current quota period (the elimination metric) */
