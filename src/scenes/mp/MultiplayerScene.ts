@@ -459,37 +459,56 @@ export class MultiplayerScene extends Phaser.Scene {
     label.setAlpha(c.alive ? 1 : 0.3)
   }
 
-  /** the ship's 4 attachment points below the hull (faithful to SP): 2 small
-   * (net-store fill + a spare) + 2 medium miner bays, each a vertical fill slot. */
+  /** the ship's 4 attachment points below the hull (faithful to SP): 2 small (net-store
+   * fill + a spare) + 2 medium miner bays — laid out in the ship's own frame so they
+   * rotate with the hull, each a fill slot. */
   private drawAttachments(x: number, y: number, s: ShipSnap): void {
-    const slotH = 12
-    const sw = 6 // small slot width
-    const mw = 9 // medium slot width
-    const gap = 2
-    const totalW = sw * 2 + mw * 2 + gap * 3
-    const top = y + 11 // just below the hull
-    let sx = x - totalW / 2
-    // small slot 1: net-store — fills with the nets aboard (cargo / capacity)
+    const ca = Math.cos(s.angle)
+    const sa = Math.sin(s.angle)
+    const fwd = { x: ca, y: sa } // along the hull's length
+    const side = { x: -sa, y: ca } // the hull's "down" (perpendicular)
+    const slotH = 6 // half-extent across the row (the fill axis)
+    const sideDist = 9 // how far below the hull the row hangs
+    const cx = x + side.x * sideDist
+    const cy = y + side.y * sideDist
     const netFrac = s.cargoCapacity > 0 ? Math.min(1, s.cargo / s.cargoCapacity) : 0
-    this.drawSlot(sx, top, sw, slotH, netFrac, 0xffcc44)
-    sx += sw + gap
-    // small slot 2: spare
-    this.drawSlot(sx, top, sw, slotH, 0, 0xffffff)
-    sx += sw + gap
-    // medium slots: the two miner bays — solid when a miner is aboard
-    this.drawSlot(sx, top, mw, slotH, s.minersAboard >= 1 ? 1 : 0, 0xffffff)
-    sx += mw + gap
-    this.drawSlot(sx, top, mw, slotH, s.minersAboard >= 2 ? 1 : 0, 0xffffff)
+    const slots = [
+      { hw: 3, frac: netFrac, fill: 0xffcc44 }, // S: net-store
+      { hw: 3, frac: 0, fill: 0xffffff }, // S: spare
+      { hw: 4.5, frac: s.minersAboard >= 1 ? 1 : 0, fill: 0xffffff }, // M: miner bay
+      { hw: 4.5, frac: s.minersAboard >= 2 ? 1 : 0, fill: 0xffffff }, // M: miner bay
+    ]
+    const gap = 2
+    const totalW = slots.reduce((n, sl) => n + sl.hw * 2, 0) + gap * (slots.length - 1)
+    let off = -totalW / 2
+    for (const sl of slots) {
+      const c = off + sl.hw
+      const scx = cx + fwd.x * c
+      const scy = cy + fwd.y * c
+      this.drawRotatedSlot(scx, scy, fwd, side, sl.hw, slotH, sl.frac, sl.fill)
+      off += sl.hw * 2 + gap
+    }
   }
 
-  private drawSlot(x: number, y: number, w: number, h: number, frac: number, fill: number): void {
+  /** a slot quad in the ship's frame; fills from the outer (down) edge inward by `frac` */
+  private drawRotatedSlot(
+    cx: number,
+    cy: number,
+    fwd: { x: number; y: number },
+    side: { x: number; y: number },
+    hw: number,
+    hh: number,
+    frac: number,
+    fill: number,
+  ): void {
     const g = this.gfx
+    const pt = (l: number, h: number) => new Phaser.Math.Vector2(cx + fwd.x * l + side.x * h, cy + fwd.y * l + side.y * h)
     g.lineStyle(1, 0x4a6a7a, 0.85)
-    g.strokeRect(x, y, w, h)
+    g.strokePoints([pt(-hw, -hh), pt(hw, -hh), pt(hw, hh), pt(-hw, hh)], true, true)
     if (frac > 0) {
-      const fh = h * frac
+      const topH = hh - 2 * hh * frac // fill from the outer (+hh) edge up
       g.fillStyle(fill, 0.9)
-      g.fillRect(x + 1, y + (h - fh) + 1, w - 2, Math.max(1, fh - 2)) // fills from the bottom up
+      g.fillPoints([pt(-hw, hh), pt(hw, hh), pt(hw, topH), pt(-hw, topH)], true)
     }
   }
 
