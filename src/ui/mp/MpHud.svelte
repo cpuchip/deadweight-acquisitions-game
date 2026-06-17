@@ -248,7 +248,7 @@
 
   <!-- eliminated banner (still spectating) -->
   {#if me && !me.alive && world.phase === 'running'}
-    <div class="banner-elim">LIQUIDATED — you're spectating the rest of the match</div>
+    <div class="banner-elim">LIQUIDATED — spectating · press F to frame the field, C to recenter</div>
   {/if}
 
   <!-- end screen -->

@@ -25,6 +25,7 @@ export class MultiplayerScene extends Phaser.Scene {
   private snap: WorldSnapshot | null = null
   private unsub: Array<() => void> = []
   private centered = false
+  private framedOnDeath = false
   private baseLabels = new Map<string, Phaser.GameObjects.Text>()
 
   // pan/zoom drag bookkeeping
@@ -83,7 +84,29 @@ export class MultiplayerScene extends Phaser.Scene {
       this.cameras.main.setZoom(next)
     })
 
+    // F frames the whole field, C / Home re-centres on your base
+    this.input.keyboard?.on('keydown-F', () => this.frameField())
+    this.input.keyboard?.on('keydown-C', () => this.frameBase())
+    this.input.keyboard?.on('keydown-HOME', () => this.frameBase())
+
     this.scale.on('resize', () => this.cameras.main.centerOn(this.cameras.main.midPoint.x, this.cameras.main.midPoint.y))
+  }
+
+  /** zoom + centre to take in the whole field (spectator / overview) */
+  private frameField(): void {
+    this.centered = true
+    const r = this.snap?.worldRadius ?? 3000
+    const vp = Math.min(this.scale.width, this.scale.height)
+    this.cameras.main.setZoom(Phaser.Math.Clamp(vp / (2.2 * r), 0.1, 1.5))
+    this.cameras.main.pan(0, 0, 350, 'Power2')
+  }
+
+  /** snap back to a working zoom on your own base */
+  private frameBase(): void {
+    this.centered = true
+    const me = this.myCorp()
+    this.cameras.main.setZoom(0.5)
+    if (me) this.cameras.main.pan(me.baseX, me.baseY, 350, 'Power2')
   }
 
   shutdown(): void {
@@ -200,6 +223,13 @@ export class MultiplayerScene extends Phaser.Scene {
         this.cameras.main.centerOn(me.baseX, me.baseY)
         this.centered = true
       }
+    }
+
+    // once eliminated, pull back to frame the whole field (you're a spectator now)
+    const myc = this.myCorp()
+    if (myc && !myc.alive && !this.framedOnDeath) {
+      this.framedOnDeath = true
+      this.frameField()
     }
 
     const colorOf = new Map(this.snap.corps.map((c) => [c.id, c.color]))

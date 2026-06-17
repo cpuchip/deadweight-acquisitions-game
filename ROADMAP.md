@@ -169,6 +169,14 @@ and tuned MP-safe (never strand). Phase breakdown (each its own tested commit):
   listing the auto-services + fee rates + cumulative service spend. (Dock/hangar/public-fee/
   pressurization are SP single-station internals that don't map to MP's one-base-per-corp —
   the fee model IS the station service here.) (next)
-- **(d) multiple miners per hauler** — Dave's 2-miner bay; milk-run deploy across a cluster.
-- **(e) room persistence** — World snapshot → disk; reconnect-resume across a server restart.
-- **(f) spectator + camera-framing polish + a balance pass**, then call it **v7 deployed**.
+- **(d) multiple miners per hauler DONE (`0a73848`)** — Dave's 2-miner bay; a hauler
+  carries up to MINER_SLOTS miners and milk-run-deploys across a cluster (minersAboard +
+  deployQueue, reservation-aware). smoke 39/39 (one hauler deploys two miners) + prod.
+- **(e) room persistence DONE (`dc36ec4`)** — running matches snapshot → disk (Docker
+  volume) + resume on boot; reconnect-by-name into the resumed sim. GC keeps running rooms
+  on empty; a TTL sweep drops abandoned ones. smoke 45/45 + a local crash→reboot→resume
+  e2e + prod.
+- **(f) spectator + camera polish** — F frames the whole field, C/Home recenters on base,
+  and you auto-frame the field when eliminated (spectator overview). Balance: the main
+  smoke match resolves to a clean winner with the fee sinks small vs ore income — healthy.
+  (in flight → then **v7 deployed**)
