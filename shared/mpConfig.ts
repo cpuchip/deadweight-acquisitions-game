@@ -70,6 +70,19 @@ export const MINER_BATTERY_MAX = 200
 export const MINER_BATTERY_DRAIN_MINING = 2 // per second while mining
 export const REPAIR_FEE_PER_POINT = 60 // credits per condition point (1.0) restored at base (hangar)
 
+// --- v6 station economy (buyable upgrades; mirrors Dave's station progression) ---
+export const STARTING_MINER_SLOTS = 3 // miners you can own at the start
+export const STATION_MINER_SLOT_CAP = 6 // max station miner slots (Dave's cap)
+export const MINER_SLOT_COST = 250 // credits to add one miner slot
+export const MAX_OWNED_DOCKS = 6
+export const DOCK_COST = 220 // each owned dock cuts the refuel fee
+export const DOCK_REFUEL_DISCOUNT = 1 / MAX_OWNED_DOCKS // fraction off refuel per owned dock (6 docks = free)
+export const MAX_OWNED_HANGARS = 3
+export const HANGAR_COST = 380 // each owned hangar cuts the repair fee
+export const HANGAR_REPAIR_DISCOUNT = 0.25 // fraction off repair per owned hangar
+export const PRESSURIZATION_COST = 600 // one-time, needs a hangar; halves the repair fee
+export const PRESSURIZED_REPAIR_FACTOR = 0.5
+
 // --- field layout (faithful: planet at origin, bases in GEO orbit around it) ---
 export const PLANET_RADIUS = 160 // visual planet radius (SP planet sits at 0,0)
 export const BASE_ORBIT_RADIUS = 650 // bases sit this far from the planet (SP base is at y=650)

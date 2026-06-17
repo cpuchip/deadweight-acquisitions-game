@@ -134,6 +134,15 @@ async function main(): Promise<void> {
     assert(typeof myShip!.minersAboard === 'number', 'ship reports miner-bay count (attachment display)')
   }
 
+  // station economy: buy a miner slot over the wire (raises the cap)
+  {
+    const before = alpha.snap?.corps.find((c) => c.id === alpha.corpId)?.minerSlots ?? 0
+    send(alpha.ws, { type: 'cmd', cmd: { kind: 'buyMinerSlot' } })
+    await sleep(600)
+    const aft = alpha.snap?.corps.find((c) => c.id === alpha.corpId)?.minerSlots ?? 0
+    assert(aft === before + 1, 'buying a station miner slot raises the cap over the network')
+  }
+
   // claim contest: Beta cannot claim Alpha's asteroid
   send(beta.ws, { type: 'cmd', cmd: { kind: 'designate', asteroidId: nearest!.id } })
   await sleep(600)

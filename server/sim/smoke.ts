@@ -4,7 +4,7 @@
 
 import { World } from './world'
 import { RESOURCE_SELL_PRICES, type ResourceType } from '../../src/world/worldConfig'
-import { SIM_HZ, MINER_COST, SHIP_COST, HAULER_FUEL_MAX } from '../../shared/mpConfig'
+import { SIM_HZ, MINER_COST, SHIP_COST, HAULER_FUEL_MAX, STARTING_MINER_SLOTS, MINER_SLOT_COST } from '../../shared/mpConfig'
 
 const dt = 1 / SIM_HZ
 let failures = 0
@@ -56,8 +56,12 @@ function ai(): void {
         if ((qty ?? 0) > 0) world.applyCommand(corp.id, { kind: 'sell', resource: res })
       }
       // each active asteroid wants a miner to deploy + a hauler to shuttle
-      if (corp.minerCount < target && corp.credits >= MINER_COST) {
-        world.applyCommand(corp.id, { kind: 'buyMiner' })
+      if (corp.minerCount < target) {
+        if (corp.minerCount >= corp.minerSlots && corp.credits >= MINER_SLOT_COST) {
+          world.applyCommand(corp.id, { kind: 'buyMinerSlot' }) // out of slots — buy one first
+        } else if (corp.credits >= MINER_COST) {
+          world.applyCommand(corp.id, { kind: 'buyMiner' })
+        }
       } else if (corp.ships.length < target && corp.credits >= SHIP_COST) {
         world.applyCommand(corp.id, { kind: 'buyShip' })
       }
@@ -373,6 +377,41 @@ assert(final.asteroids.some((a) => a.isCompany), 'company asteroids are flagged 
   // the restored world keeps simulating from where it left off
   restored.tick(dt)
   assert(restored.snapshot().t > before.t, 'a restored match resumes ticking')
+}
+
+// ---- v6: station economy (miner-slot cap + buyable upgrades + cargo upgrade) ----
+{
+  const w = new World(4040)
+  w.addCorp('A', 'Cap', 0x55ccff)
+  w.addCorp('B', 'Slot', 0xff7755)
+  w.addCorp('C', 'Dock', 0x88dd66)
+  w.addCorp('D', 'Hangar', 0xcc88ff)
+  w.addCorp('E', 'Upgrade', 0xffcc44)
+  const find = (id: string) => w.snapshot().corps.find((c) => c.id === id)!
+  assert(
+    find('A').minerSlots === STARTING_MINER_SLOTS && find('A').minerCount === 1,
+    'corp starts with the station miner slots + 1 pre-loaded miner',
+  )
+  // A: buying miners is capped at the station slots
+  for (let i = 0; i < 6; i++) w.applyCommand('A', { kind: 'buyMiner' })
+  assert(find('A').minerCount === STARTING_MINER_SLOTS, 'buyMiner is capped at the station miner slots')
+  // B: a miner slot raises the cap
+  w.applyCommand('B', { kind: 'buyMinerSlot' })
+  assert(find('B').minerSlots === STARTING_MINER_SLOTS + 1, 'buying a miner slot raises the cap')
+  // C: owned dock (cheaper refuel)
+  w.applyCommand('C', { kind: 'buyDock' })
+  assert(find('C').ownedDocks === 1, 'buying an owned dock')
+  // D: hangar, and pressurization is gated on credits/hangar
+  w.applyCommand('D', { kind: 'buyHangar' })
+  w.applyCommand('D', { kind: 'buyPressurization' }) // not enough left after the hangar
+  assert(find('D').ownedHangars === 1, 'buying a hangar')
+  assert(!find('D').pressurized, 'pressurization is gated (needs a hangar + the credits)')
+  // E: cargo upgrade (re-added — it lives in the base economy, like SP)
+  const ship = find('E').ships[0]
+  const capBefore = ship.cargoCapacity
+  w.applyCommand('E', { kind: 'upgradeShip', shipId: ship.id })
+  const after2 = find('E').ships[0]
+  assert(after2.cargoLevel === 1 && after2.cargoCapacity > capBefore, 'cargo upgrade raises capacity')
 }
 
 if (failures > 0) {

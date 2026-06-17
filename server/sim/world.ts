@@ -30,6 +30,19 @@ import {
   SHIP_COST,
   MINER_COST,
   CARGO_CAPACITY_TIERS,
+  CARGO_UPGRADE_COSTS,
+  MAX_CARGO_LEVEL,
+  STARTING_MINER_SLOTS,
+  STATION_MINER_SLOT_CAP,
+  MINER_SLOT_COST,
+  MAX_OWNED_DOCKS,
+  DOCK_COST,
+  DOCK_REFUEL_DISCOUNT,
+  MAX_OWNED_HANGARS,
+  HANGAR_COST,
+  HANGAR_REPAIR_DISCOUNT,
+  PRESSURIZATION_COST,
+  PRESSURIZED_REPAIR_FACTOR,
   STORAGE_CAPACITY,
   MAX_SHIPS_PER_CORP,
   SHIP_SPEED,
@@ -137,6 +150,10 @@ interface SimCorp {
   orphanNets: SimOrphanNet[]
   /** cumulative credits spent on station services (refuel + repair) */
   serviceSpend: number
+  minerSlots: number
+  ownedDocks: number
+  ownedHangars: number
+  pressurized: boolean
   claims: string[]
   shipCounter: number
   autoDesignate: boolean
@@ -199,6 +216,10 @@ export class World {
       deployedMiners: [],
       orphanNets: [],
       serviceSpend: 0,
+      minerSlots: STARTING_MINER_SLOTS,
+      ownedDocks: 0,
+      ownedHangars: 0,
+      pressurized: false,
       claims: [],
       shipCounter: 0,
       autoDesignate: false,
@@ -295,8 +316,23 @@ export class World {
       case 'buyMiner':
         this.buyMiner(corp)
         break
+      case 'buyMinerSlot':
+        this.buyMinerSlot(corp)
+        break
+      case 'buyDock':
+        this.buyDock(corp)
+        break
+      case 'buyHangar':
+        this.buyHangar(corp)
+        break
+      case 'buyPressurization':
+        this.buyPressurization(corp)
+        break
       case 'sell':
         this.sellResource(corp, cmd.resource)
+        break
+      case 'upgradeShip':
+        this.upgradeShip(corp, cmd.shipId)
         break
       case 'toggleAutoDesignate':
         corp.autoDesignate = !corp.autoDesignate
@@ -358,10 +394,53 @@ export class World {
   }
 
   private buyMiner(corp: SimCorp): void {
+    if (corp.minersOwned >= corp.minerSlots) return // need a free station miner slot
     if (corp.credits < MINER_COST) return
     corp.credits -= MINER_COST
     corp.minersOwned += 1
     this.pushLog(`${corp.name} bought an AutoMiner.`)
+  }
+
+  private buyMinerSlot(corp: SimCorp): void {
+    if (corp.minerSlots >= STATION_MINER_SLOT_CAP) return
+    if (corp.credits < MINER_SLOT_COST) return
+    corp.credits -= MINER_SLOT_COST
+    corp.minerSlots += 1
+    this.pushLog(`${corp.name} added a station miner slot (${corp.minerSlots}/${STATION_MINER_SLOT_CAP}).`)
+  }
+
+  private buyDock(corp: SimCorp): void {
+    if (corp.ownedDocks >= MAX_OWNED_DOCKS) return
+    if (corp.credits < DOCK_COST) return
+    corp.credits -= DOCK_COST
+    corp.ownedDocks += 1
+    this.pushLog(`${corp.name} bought an owned dock — cheaper refuel.`)
+  }
+
+  private buyHangar(corp: SimCorp): void {
+    if (corp.ownedHangars >= MAX_OWNED_HANGARS) return
+    if (corp.credits < HANGAR_COST) return
+    corp.credits -= HANGAR_COST
+    corp.ownedHangars += 1
+    this.pushLog(`${corp.name} bought a hangar — cheaper repairs.`)
+  }
+
+  private buyPressurization(corp: SimCorp): void {
+    if (corp.pressurized || corp.ownedHangars < 1) return
+    if (corp.credits < PRESSURIZATION_COST) return
+    corp.credits -= PRESSURIZATION_COST
+    corp.pressurized = true
+    this.pushLog(`${corp.name} pressurized a hangar bay — faster, cheaper service.`)
+  }
+
+  private upgradeShip(corp: SimCorp, shipId: string): void {
+    const ship = corp.ships.find((s) => s.id === shipId)
+    if (!ship || ship.cargoLevel >= MAX_CARGO_LEVEL) return
+    const cost = CARGO_UPGRADE_COSTS[ship.cargoLevel]
+    if (corp.credits < cost) return
+    corp.credits -= cost
+    ship.cargoLevel += 1
+    this.pushLog(`${corp.name} upgraded ${ship.name}'s cargo hold to ${shipCapacity(ship)} t.`)
   }
 
   private sellResource(corp: SimCorp, resource: ResourceType): void {
@@ -763,7 +842,8 @@ export class World {
   private serviceMiner(corp: SimCorp, m: SimMiner): void {
     m.battery = MINER_BATTERY_MAX
     if (m.condition < CONDITION_GRACE_THRESHOLD) {
-      const fee = (1 - m.condition) * REPAIR_FEE_PER_POINT
+      let fee = (1 - m.condition) * REPAIR_FEE_PER_POINT * Math.max(0, 1 - corp.ownedHangars * HANGAR_REPAIR_DISCOUNT)
+      if (corp.pressurized) fee *= PRESSURIZED_REPAIR_FACTOR
       corp.credits = Math.max(0, corp.credits - fee)
       corp.serviceSpend += fee
       m.condition = 1
@@ -775,7 +855,7 @@ export class World {
   private refuel(corp: SimCorp, ship: SimShip): void {
     const need = HAULER_FUEL_MAX - ship.fuel
     if (need > 0.5) {
-      const fee = need * REFUEL_FEE_PER_UNIT
+      const fee = need * REFUEL_FEE_PER_UNIT * Math.max(0, 1 - corp.ownedDocks * DOCK_REFUEL_DISCOUNT)
       corp.credits = Math.max(0, corp.credits - fee)
       corp.serviceSpend += fee
       ship.fuel = HAULER_FUEL_MAX
@@ -936,6 +1016,10 @@ export class World {
       })),
       autoDesignate: c.autoDesignate,
       serviceSpend: Math.round(c.serviceSpend),
+      minerSlots: c.minerSlots,
+      ownedDocks: c.ownedDocks,
+      ownedHangars: c.ownedHangars,
+      pressurized: c.pressurized,
       tonnage: Math.round(c.tonnage),
       periodTonnage: Math.round(c.periodTonnage),
       alive: c.alive,

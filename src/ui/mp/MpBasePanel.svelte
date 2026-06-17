@@ -1,7 +1,11 @@
 <script lang="ts">
-  import { mpSnapshot, mpYouCorpId, mpConnection, mpBasePanelOpen } from '../../state/mpStore'
+  import { mpSnapshot, mpYouCorpId, mpConnection, mpBasePanelOpen, mpSelectedShip } from '../../state/mpStore'
   import { sendCommand } from '../../net/mpClient'
-  import { SHIP_COST, MINER_COST, MAX_SHIPS_PER_CORP, REFUEL_FEE_PER_UNIT, REPAIR_FEE_PER_POINT } from '../../../shared/mpConfig'
+  import {
+    SHIP_COST, MINER_COST, MAX_SHIPS_PER_CORP, REFUEL_FEE_PER_UNIT, REPAIR_FEE_PER_POINT,
+    STATION_MINER_SLOT_CAP, MINER_SLOT_COST, MAX_OWNED_DOCKS, DOCK_COST, MAX_OWNED_HANGARS,
+    HANGAR_COST, PRESSURIZATION_COST, MAX_CARGO_LEVEL, CARGO_CAPACITY_TIERS, CARGO_UPGRADE_COSTS,
+  } from '../../../shared/mpConfig'
   import { RESOURCE_SELL_PRICES, type ResourceType } from '../../world/worldConfig'
 
   const RESOURCE_LABELS: Record<ResourceType, string> = {
@@ -17,6 +21,7 @@
   $: show = $mpConnection === 'connected' && $mpBasePanelOpen && me && me.alive
   $: stored = me ? Object.values(me.storage).reduce((s, n) => s + (n ?? 0), 0) : 0
   $: deployed = me ? me.miners.length : 0
+  $: selShip = me ? me.ships.find((s) => s.id === $mpSelectedShip) ?? null : null
 
   function close(): void {
     mpBasePanelOpen.set(false)
@@ -29,6 +34,21 @@
   }
   function buyMiner(): void {
     sendCommand({ kind: 'buyMiner' })
+  }
+  function buyMinerSlot(): void {
+    sendCommand({ kind: 'buyMinerSlot' })
+  }
+  function buyDock(): void {
+    sendCommand({ kind: 'buyDock' })
+  }
+  function buyHangar(): void {
+    sendCommand({ kind: 'buyHangar' })
+  }
+  function buyPress(): void {
+    sendCommand({ kind: 'buyPressurization' })
+  }
+  function upgradeCargo(id: string): void {
+    sendCommand({ kind: 'upgradeShip', shipId: id })
   }
   function toggleAuto(): void {
     sendCommand({ kind: 'toggleAutoDesignate' })
@@ -66,14 +86,53 @@
     </div>
 
     <div class="sec">EQUIPMENT</div>
-    <div class="row buy" class:off={me.credits < MINER_COST}>
+    <div class="row buy" class:off={me.credits < MINER_COST || me.minerCount >= me.minerSlots}>
       <span class="label">AutoMiner</span>
-      <span class="price">{MINER_COST}cr</span>
-      <button class="btn" disabled={me.credits < MINER_COST} on:click={buyMiner}>Buy</button>
+      <span class="price">{me.minerCount}/{me.minerSlots} · {MINER_COST}cr</span>
+      <button class="btn" disabled={me.credits < MINER_COST || me.minerCount >= me.minerSlots} on:click={buyMiner}>
+        {me.minerCount >= me.minerSlots ? 'No slot' : 'Buy'}
+      </button>
     </div>
-    <div class="sec">STATION SERVICES</div>
-    <div class="row svc"><span class="label">Refuel haulers</span><span class="price">auto · {REFUEL_FEE_PER_UNIT}cr/unit</span></div>
-    <div class="row svc"><span class="label">Repair + recharge miners</span><span class="price">auto · {REPAIR_FEE_PER_POINT}cr/pt</span></div>
+
+    {#if selShip}
+      <div class="sec">UPGRADES · {selShip.name}</div>
+      {#if selShip.cargoLevel < MAX_CARGO_LEVEL}
+        <div class="row buy" class:off={me.credits < CARGO_UPGRADE_COSTS[selShip.cargoLevel]}>
+          <span class="label">Cargo hold</span>
+          <span class="price">→{CARGO_CAPACITY_TIERS[selShip.cargoLevel + 1]}t · {CARGO_UPGRADE_COSTS[selShip.cargoLevel]}cr</span>
+          <button class="btn" disabled={me.credits < CARGO_UPGRADE_COSTS[selShip.cargoLevel]} on:click={() => upgradeCargo(selShip.id)}>Buy</button>
+        </div>
+      {:else}
+        <div class="row svc"><span class="label">Cargo hold</span><span class="value">MAX ({selShip.cargoCapacity}t)</span></div>
+      {/if}
+    {/if}
+
+    <div class="sec">STATION</div>
+    <div class="row buy" class:off={me.minerSlots >= STATION_MINER_SLOT_CAP || me.credits < MINER_SLOT_COST}>
+      <span class="label">Miner slot</span>
+      <span class="price">{me.minerSlots}/{STATION_MINER_SLOT_CAP} · {MINER_SLOT_COST}cr</span>
+      <button class="btn" disabled={me.minerSlots >= STATION_MINER_SLOT_CAP || me.credits < MINER_SLOT_COST} on:click={buyMinerSlot}>{me.minerSlots >= STATION_MINER_SLOT_CAP ? 'Max' : 'Buy'}</button>
+    </div>
+    <div class="row buy" class:off={me.ownedDocks >= MAX_OWNED_DOCKS || me.credits < DOCK_COST}>
+      <span class="label">Dock · cheaper refuel</span>
+      <span class="price">{me.ownedDocks}/{MAX_OWNED_DOCKS} · {DOCK_COST}cr</span>
+      <button class="btn" disabled={me.ownedDocks >= MAX_OWNED_DOCKS || me.credits < DOCK_COST} on:click={buyDock}>{me.ownedDocks >= MAX_OWNED_DOCKS ? 'Max' : 'Buy'}</button>
+    </div>
+    <div class="row buy" class:off={me.ownedHangars >= MAX_OWNED_HANGARS || me.credits < HANGAR_COST}>
+      <span class="label">Hangar · cheaper repair</span>
+      <span class="price">{me.ownedHangars}/{MAX_OWNED_HANGARS} · {HANGAR_COST}cr</span>
+      <button class="btn" disabled={me.ownedHangars >= MAX_OWNED_HANGARS || me.credits < HANGAR_COST} on:click={buyHangar}>{me.ownedHangars >= MAX_OWNED_HANGARS ? 'Max' : 'Buy'}</button>
+    </div>
+    <div class="row buy" class:off={me.pressurized || me.ownedHangars < 1 || me.credits < PRESSURIZATION_COST}>
+      <span class="label">Pressurize bay · ½ repair</span>
+      {#if me.pressurized}
+        <span class="price">DONE</span><button class="btn" disabled>✓</button>
+      {:else}
+        <span class="price">{PRESSURIZATION_COST}cr</span>
+        <button class="btn" disabled={me.ownedHangars < 1 || me.credits < PRESSURIZATION_COST} on:click={buyPress}>Buy</button>
+      {/if}
+    </div>
+    <div class="row svc"><span class="label">Service fees · refuel {REFUEL_FEE_PER_UNIT}/u · repair {REPAIR_FEE_PER_POINT}/pt</span></div>
     <div class="row svc"><span class="label">Spent on services</span><span class="value credits">{me.serviceSpend}cr</span></div>
 
     <div class="sec">AUTOMATION</div>
@@ -101,6 +160,8 @@
     bottom: 16px;
     left: 16px;
     width: 260px;
+    max-height: calc(100vh - 88px);
+    overflow-y: auto;
     background: rgba(5, 10, 20, 0.92);
     border: 1px solid #2a4a6a;
     border-radius: 6px;

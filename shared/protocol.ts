@@ -109,6 +109,12 @@ export interface CorpSnap {
   autoDesignate: boolean
   /** cumulative credits spent on station services (refuel + repair) */
   serviceSpend: number
+  /** station miner-slot cap — you can own at most this many AutoMiners */
+  minerSlots: number
+  /** owned docks (cheaper refuel) / hangars (cheaper repair) / pressurized bay */
+  ownedDocks: number
+  ownedHangars: number
+  pressurized: boolean
   /** cumulative tons DELIVERED to base across the whole match */
   tonnage: number
   /** tons delivered in the current quota period (the elimination metric) */
@@ -146,7 +152,12 @@ export type GameCommand =
   | { kind: 'undesignate'; asteroidId: string }
   | { kind: 'buyShip' }
   | { kind: 'buyMiner' }
+  | { kind: 'buyMinerSlot' }
+  | { kind: 'buyDock' }
+  | { kind: 'buyHangar' }
+  | { kind: 'buyPressurization' }
   | { kind: 'sell'; resource: ResourceType }
+  | { kind: 'upgradeShip'; shipId: string }
   | { kind: 'toggleAutoDesignate' }
 
 export type ClientMessage =
