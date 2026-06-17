@@ -22,7 +22,9 @@ import {
   STARTING_MINERS,
   SHIP_COST,
   MINER_COST,
-  SHIP_CARGO_CAPACITY,
+  CARGO_CAPACITY_TIERS,
+  CARGO_UPGRADE_COSTS,
+  MAX_CARGO_LEVEL,
   STORAGE_CAPACITY,
   MAX_SHIPS_PER_CORP,
   SHIP_SPEED,
@@ -37,16 +39,22 @@ import type { GameCommand, WorldSnapshot, ShipPhase, MatchPhase } from '../../sh
 
 interface SimShip {
   id: string
+  name: string
   x: number
   y: number
   angle: number
   phase: ShipPhase
   cargo: number
+  cargoLevel: number
   cargoResource: ResourceType | null
   targetAsteroidId: string | null
   unloadTimer: number
   /** a hauler can only mine if it carries a purchased AutoMiner */
   hasMiner: boolean
+}
+
+function shipCapacity(s: SimShip): number {
+  return CARGO_CAPACITY_TIERS[s.cargoLevel] ?? CARGO_CAPACITY_TIERS[0]
 }
 
 interface SimCorp {
@@ -62,6 +70,10 @@ interface SimCorp {
   ships: SimShip[]
   /** asteroidIds this corp has claimed, in claim order (drives dispatch) */
   claims: string[]
+  /** running counter for naming commissioned haulers */
+  shipCounter: number
+  /** auto-claim the best unclaimed asteroid when a miner-hauler is free */
+  autoDesignate: boolean
   alive: boolean
   online: boolean
 }
@@ -109,6 +121,8 @@ export class World {
       periodTonnage: 0,
       ships: [],
       claims: [],
+      shipCounter: 0,
+      autoDesignate: false,
       alive: true,
       online: true,
     }
@@ -132,13 +146,16 @@ export class World {
   }
 
   private makeShip(corp: SimCorp, hasMiner: boolean): SimShip {
+    corp.shipCounter += 1
     return {
       id: nanoid(8),
+      name: `Hauler-${String(corp.shipCounter).padStart(2, '0')}`,
       x: corp.baseX,
       y: corp.baseY,
       angle: 0,
       phase: 'idle',
       cargo: 0,
+      cargoLevel: 0,
       cargoResource: null,
       targetAsteroidId: null,
       unloadTimer: 0,
@@ -187,7 +204,23 @@ export class World {
       case 'sell':
         this.sellResource(corp, cmd.resource)
         break
+      case 'upgradeShip':
+        this.upgradeShip(corp, cmd.shipId)
+        break
+      case 'toggleAutoDesignate':
+        corp.autoDesignate = !corp.autoDesignate
+        break
     }
+  }
+
+  private upgradeShip(corp: SimCorp, shipId: string): void {
+    const ship = corp.ships.find((s) => s.id === shipId)
+    if (!ship || ship.cargoLevel >= MAX_CARGO_LEVEL) return
+    const cost = CARGO_UPGRADE_COSTS[ship.cargoLevel]
+    if (corp.credits < cost) return
+    corp.credits -= cost
+    ship.cargoLevel += 1
+    this.pushLog(`${corp.name} upgraded ${ship.name}'s cargo hold to ${shipCapacity(ship)} t.`)
   }
 
   private designate(corp: SimCorp, asteroidId: string): void {
@@ -248,6 +281,7 @@ export class World {
 
     for (const corp of this.corps.values()) {
       if (!corp.alive) continue
+      if (corp.autoDesignate) this.autoDesignate(corp)
       this.dispatch(corp)
       for (const ship of corp.ships) this.updateShip(corp, ship, dt)
       corp.claims = corp.claims.filter((id) => {
@@ -257,6 +291,24 @@ export class World {
     }
 
     if (this.t >= this.periodEndsAt) this.deadline()
+  }
+
+  /** Auto-claim the best unclaimed rock while the fleet has an unworked miner-hauler. */
+  private autoDesignate(corp: SimCorp): void {
+    const minerHaulers = corp.ships.filter((s) => s.hasMiner).length
+    if (corp.claims.length >= minerHaulers) return
+    const id = this.bestUnclaimedAsteroid()
+    if (id) this.designate(corp, id)
+  }
+
+  private bestUnclaimedAsteroid(): string | null {
+    let best: { id: string; value: number } | null = null
+    for (const a of this.asteroids.values()) {
+      if (a.claimedBy || a.currentQuantity <= 0) continue
+      const value = (RESOURCE_SELL_PRICES[a.resourceType] ?? 1) * a.currentQuantity
+      if (!best || value > best.value) best = { id: a.id, value }
+    }
+    return best?.id ?? null
   }
 
   /** Assign idle MINER-EQUIPPED ships to claimed-but-uncovered asteroids. */
@@ -309,14 +361,15 @@ export class World {
           ship.phase = ship.cargo > 0 ? 'to-base' : 'idle'
           return
         }
-        const room = SHIP_CARGO_CAPACITY - ship.cargo
+        const cap = shipCapacity(ship)
+        const room = cap - ship.cargo
         const got = Math.min(MINE_RATE * dt, room, a.currentQuantity)
         if (got > 0) {
           a.currentQuantity -= got
           ship.cargo += got
           ship.cargoResource = a.resourceType
         }
-        const full = ship.cargo >= SHIP_CARGO_CAPACITY - 0.001
+        const full = ship.cargo >= cap - 0.001
         if (a.currentQuantity <= 0) {
           a.claimedBy = null
           corp.claims = corp.claims.filter((id) => id !== a.id)
@@ -467,18 +520,21 @@ export class World {
       storage: roundStorage(c.storage),
       storageCapacity: STORAGE_CAPACITY,
       minerCount: c.ships.filter((s) => s.hasMiner).length,
+      autoDesignate: c.autoDesignate,
       tonnage: Math.round(c.tonnage),
       periodTonnage: Math.round(c.periodTonnage),
       alive: c.alive,
       online: c.online,
       ships: c.ships.map((s) => ({
         id: s.id,
+        name: s.name,
         x: s.x,
         y: s.y,
         angle: s.angle,
         phase: s.phase,
         cargo: Math.round(s.cargo),
-        cargoCapacity: SHIP_CARGO_CAPACITY,
+        cargoCapacity: shipCapacity(s),
+        cargoLevel: s.cargoLevel,
         cargoResource: s.cargoResource,
         targetAsteroidId: s.targetAsteroidId,
         hasMiner: s.hasMiner,

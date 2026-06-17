@@ -30,6 +30,9 @@
   function buyMiner(): void {
     sendCommand({ kind: 'buyMiner' })
   }
+  function toggleAuto(): void {
+    sendCommand({ kind: 'toggleAutoDesignate' })
+  }
 </script>
 
 {#if show && me}
@@ -70,9 +73,18 @@
         {freeSlots <= 0 ? 'No free hauler' : 'Buy'}
       </button>
     </div>
+    <div class="sec">AUTOMATION</div>
+    <div class="row buy">
+      <span class="label">Auto-designate</span>
+      <span class="price">{me.autoDesignate ? 'ON' : 'OFF'}</span>
+      <button class="btn" on:click={toggleAuto}>{me.autoDesignate ? 'Disable' : 'Enable'}</button>
+    </div>
+
     <div class="hint">
       {#if me.minerCount === 0}
         Buy an AutoMiner, then claim an asteroid on the map — a miner-equipped hauler mines it.
+      {:else if me.autoDesignate}
+        Auto-designate is ON — idle miner-haulers claim the richest free asteroids for you.
       {:else}
         A hauler needs an AutoMiner to mine. Mined ore hauls here to storage — sell it for credits.
       {/if}

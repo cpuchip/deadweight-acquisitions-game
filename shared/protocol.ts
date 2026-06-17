@@ -25,6 +25,8 @@ export interface AsteroidSnap {
 
 export interface ShipSnap {
   id: string
+  /** display name, e.g. "Hauler-01" */
+  name: string
   x: number
   y: number
   /** facing in radians, for rendering the hull */
@@ -32,6 +34,8 @@ export interface ShipSnap {
   phase: ShipPhase
   cargo: number
   cargoCapacity: number
+  /** 0..MAX_CARGO_LEVEL — drives cargoCapacity via the tier table */
+  cargoLevel: number
   cargoResource: ResourceType | null
   targetAsteroidId: string | null
   /** a hauler can only mine if it carries a purchased AutoMiner */
@@ -51,6 +55,8 @@ export interface CorpSnap {
   storageCapacity: number
   /** total AutoMiners owned (mounted across the fleet) */
   minerCount: number
+  /** auto-claim the best unclaimed asteroid when a miner-hauler is free */
+  autoDesignate: boolean
   /** cumulative tons DELIVERED to base across the whole match */
   tonnage: number
   /** tons delivered in the current quota period (the elimination metric) */
@@ -89,6 +95,8 @@ export type GameCommand =
   | { kind: 'buyShip' }
   | { kind: 'buyMiner' }
   | { kind: 'sell'; resource: ResourceType }
+  | { kind: 'upgradeShip'; shipId: string }
+  | { kind: 'toggleAutoDesignate' }
 
 export type ClientMessage =
   | { type: 'join'; name: string; room: string }

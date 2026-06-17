@@ -104,6 +104,17 @@ async function main(): Promise<void> {
   }
   assert(earned, 'mine->haul->sell loop banked tonnage over the network')
 
+  // v4: ship naming + cargo upgrade over the network
+  {
+    const myShip = alpha.snap?.corps.find((c) => c.id === alpha.corpId)?.ships[0]
+    assert(!!myShip && /^Hauler-\d{2}$/.test(myShip.name), 'ships are named (e.g. Hauler-01)')
+    const capBefore = myShip!.cargoCapacity
+    send(alpha.ws, { type: 'cmd', cmd: { kind: 'upgradeShip', shipId: myShip!.id } })
+    await sleep(700)
+    const after = alpha.snap?.corps.find((c) => c.id === alpha.corpId)?.ships[0]
+    assert(!!after && after.cargoCapacity > capBefore, 'cargo upgrade raised capacity over the network')
+  }
+
   // claim contest: Beta cannot claim Alpha's asteroid
   send(beta.ws, { type: 'cmd', cmd: { kind: 'designate', asteroidId: nearest!.id } })
   await sleep(600)

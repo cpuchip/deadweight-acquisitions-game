@@ -28,9 +28,14 @@ export const STARTING_SHIPS = 1 // SP spawns a single Hauler-01
 export const STARTING_MINERS = 0 // you must BUY miners before you can mine
 export const SHIP_COST = 500 // Base.SHIP_COMMISSION_COST
 export const MINER_COST = 300 // AutoMiner.AUTOMINER_PURCHASE_COST
-export const SHIP_CARGO_CAPACITY = 200 // Ship.CARGO_CAPACITY_TIERS[0]
 export const STORAGE_CAPACITY = 2000 // Base.BASE_STORAGE_CAPACITY
 export const MAX_SHIPS_PER_CORP = 8
+
+// per-ship cargo upgrade tiers (mirror Ship.CARGO_CAPACITY_TIERS / CARGO_UPGRADE_COSTS)
+export const CARGO_CAPACITY_TIERS = [200, 350, 550, 800] as const
+export const CARGO_UPGRADE_COSTS = [300, 600, 1000] as const
+export const MAX_CARGO_LEVEL = 3
+export const SHIP_CARGO_CAPACITY = CARGO_CAPACITY_TIERS[0] // starting capacity (tier 0)
 
 // --- ship behaviour ---
 export const SHIP_SPEED = 180 // world units / sec (Ship.SHIP_SPEED)

@@ -122,6 +122,30 @@ assert(
   'if a winner emerged, it was the aggressive corp',
 )
 
+// ---- v4: named ships, cargo upgrades, auto-designate ----
+{
+  const w = new World(2024)
+  w.addCorp('Z', 'Fleet', 0x55ccff)
+  const c0 = w.snapshot().corps[0]
+  assert(/^Hauler-\d{2}$/.test(c0.ships[0].name), 'ships are named Hauler-NN')
+
+  const ship = c0.ships[0]
+  const capBefore = ship.cargoCapacity
+  w.applyCommand('Z', { kind: 'upgradeShip', shipId: ship.id })
+  const after = w.snapshot().corps[0].ships[0]
+  assert(after.cargoLevel === 1 && after.cargoCapacity > capBefore, 'cargo upgrade raises capacity')
+
+  w.start()
+  w.applyCommand('Z', { kind: 'buyMiner' })
+  w.applyCommand('Z', { kind: 'toggleAutoDesignate' })
+  assert(w.snapshot().corps[0].autoDesignate === true, 'auto-designate toggles on')
+  for (let i = 0; i < 60; i++) w.tick(dt)
+  assert(
+    w.snapshot().asteroids.some((a) => a.claimedBy === 'Z'),
+    'auto-designate auto-claims an asteroid for an idle miner-hauler',
+  )
+}
+
 if (failures > 0) {
   console.error(`\n${failures} assertion(s) failed`)
   process.exit(1)

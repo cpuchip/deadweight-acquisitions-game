@@ -96,5 +96,15 @@ on push is fixed (GitHub App granted access to the repo).
   - **EntityPanel**: ship selection + detail (state/cargo/miner/owner) ✓ + asteroid panel
   - bigger **textured planet** (banding) ✓
   - (deferred to when entities split: miner/net detail panels — that's v5)
-- **v4 NEXT:** fuller base (cargo upgrades, auto-designate, miner storage), named ships
-  with per-ship upgrades, multiple miners per hauler (attachment slots).
+- **v4 COMPLETE 2026-06-17:**
+  - **named ships** (Hauler-01, -02, …) ✓
+  - **per-ship cargo upgrades** (tiers 200/350/550/800, costs 300/600/1000) via the
+    ship detail panel ✓
+  - **auto-designate** toggle (base panel AUTOMATION) — idle miner-haulers auto-claim
+    the richest free asteroids ✓ (browser-proven: delivered 200t via auto-claim)
+  - **Re-sequenced:** multiple-miners-per-hauler (attachment slots) MOVED to **v5** —
+    it's meaningless until miners are separately deployable (the v5 deep-mining loop).
+    Same destination, cleaner phase boundary.
+- **v5 NEXT:** the deep mining loop — hauler **deploys** a miner at the asteroid →
+  miner mines + **ejects nets** → hauler **collects nets** and hauls to base; attachment
+  slots (net-store + 2 medium = multi-miner haulers); beacons + orphaned-net recovery.

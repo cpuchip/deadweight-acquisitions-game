@@ -1,6 +1,7 @@
 <script lang="ts">
   import { mpSnapshot, mpYouCorpId, mpConnection, mpSelectedAsteroid, mpSelectedShip, mpBasePanelOpen, mpIsHost, mpQuickClaim } from '../../state/mpStore'
   import { sendCommand, pauseMatch, quitMatch } from '../../net/mpClient'
+  import { MAX_CARGO_LEVEL, CARGO_UPGRADE_COSTS, CARGO_CAPACITY_TIERS } from '../../../shared/mpConfig'
   import type { CorpSnap, AsteroidSnap, ShipSnap, WorldSnapshot } from '../../../shared/protocol'
 
   function hex(c: number): string {
@@ -61,6 +62,9 @@
   }
   function toggleQuickClaim(): void {
     mpQuickClaim.update((v) => !v)
+  }
+  function upgrade(shipId: string): void {
+    sendCommand({ kind: 'upgradeShip', shipId })
   }
   function claim(a: AsteroidSnap): void {
     if (a.claimedBy === $mpYouCorpId) sendCommand({ kind: 'undesignate', asteroidId: a.id })
@@ -151,11 +155,24 @@
   {#if selShip}
     <div class="sel ship">
       <div class="sel-title" style="color:{hex(selShip.corp.color)}">
-        {selShip.corp.name}{selShip.corp.id === $mpYouCorpId ? ' · your hauler' : ''}
+        {selShip.ship.name} · {selShip.corp.name}{selShip.corp.id === $mpYouCorpId ? ' (you)' : ''}
       </div>
       <div class="sel-row"><span>state</span><span>{SHIP_STATE[selShip.ship.phase] ?? selShip.ship.phase}</span></div>
       <div class="sel-row"><span>cargo</span><span>{selShip.ship.cargo} / {selShip.ship.cargoCapacity}{selShip.ship.cargoResource ? ' · ' + selShip.ship.cargoResource : ''}</span></div>
       <div class="sel-row"><span>AutoMiner</span><span>{selShip.ship.hasMiner ? 'fitted' : 'none'}</span></div>
+      {#if selShip.corp.id === $mpYouCorpId}
+        {#if selShip.ship.cargoLevel < MAX_CARGO_LEVEL}
+          <button
+            class="sel-btn"
+            disabled={!me || me.credits < CARGO_UPGRADE_COSTS[selShip.ship.cargoLevel]}
+            on:click={() => upgrade(selShip.ship.id)}
+          >
+            UPGRADE CARGO → {CARGO_CAPACITY_TIERS[selShip.ship.cargoLevel + 1]}t · {CARGO_UPGRADE_COSTS[selShip.ship.cargoLevel]}cr
+          </button>
+        {:else}
+          <div class="sel-row"><span>cargo hold</span><span>MAX</span></div>
+        {/if}
+      {/if}
     </div>
   {/if}
 
