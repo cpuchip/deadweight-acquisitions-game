@@ -81,6 +81,35 @@ const server = http.createServer(serveStatic)
 const wss = new WebSocketServer({ server, path: '/ws' })
 const registry = new RoomRegistry()
 
+// --- persistence: resume in-progress matches across a server restart ---
+const STATE_FILE = path.join(process.env.STATE_DIR || process.cwd(), 'rooms-state.json')
+try {
+  if (fs.existsSync(STATE_FILE)) {
+    const resumed = registry.loadFrom(fs.readFileSync(STATE_FILE, 'utf8'))
+    if (resumed > 0) console.log(`[deadweight] resumed ${resumed} in-progress match(es) from ${STATE_FILE}`)
+  }
+} catch (e) {
+  console.warn('[deadweight] could not load persisted state:', e)
+}
+function persist(): void {
+  try {
+    fs.writeFileSync(STATE_FILE, registry.snapshot())
+  } catch {
+    /* best-effort */
+  }
+}
+const EMPTY_TTL_MS = Number(process.env.EMPTY_TTL_MS) || 30 * 60_000 // drop abandoned matches after 30m
+setInterval(() => {
+  registry.sweep(Date.now(), EMPTY_TTL_MS)
+  persist()
+}, Number(process.env.PERSIST_MS) || 30_000)
+for (const sig of ['SIGTERM', 'SIGINT'] as const) {
+  process.on(sig, () => {
+    persist()
+    process.exit(0)
+  })
+}
+
 wss.on('connection', (ws: WebSocket) => {
   ws.on('message', (data) => registry.route(ws, data.toString()))
   ws.on('close', () => registry.close(ws))

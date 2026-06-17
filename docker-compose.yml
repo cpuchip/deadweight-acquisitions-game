@@ -9,6 +9,10 @@ services:
     restart: unless-stopped
     environment:
       - PORT=8080
+      - STATE_DIR=/data
+    volumes:
+      # persists in-progress matches across redeploys/restarts (room snapshot → disk)
+      - deadweight-state:/data
     ports:
       - "8080:8080"
     healthcheck:
@@ -17,3 +21,6 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
+
+volumes:
+  deadweight-state:

@@ -22,10 +22,28 @@ export class Room {
   private members = new Map<WebSocket, Member>()
   /** corp ids in join order; index 0 is the host */
   private order: string[] = []
+  /** ms timestamp the room last went empty (null while occupied) — for the abandon sweep */
+  private emptyAt: number | null = null
 
-  constructor(code: string) {
+  /** how long this room has had no connected members (0 if occupied) */
+  emptyForMs(now: number): number {
+    return this.emptyAt === null ? 0 : now - this.emptyAt
+  }
+
+  constructor(code: string, world?: World) {
     this.code = code
-    this.world = new World((Math.random() * 0x7fffffff) | 0)
+    this.world = world ?? new World((Math.random() * 0x7fffffff) | 0)
+  }
+
+  /** snapshot this room's persistent state (the world + host order; not the sockets) */
+  serialize(): Record<string, unknown> {
+    return { code: this.code, order: this.order, world: this.world.serialize() }
+  }
+
+  static restore(s: { code: string; order?: string[]; world: unknown }): Room {
+    const room = new Room(s.code, World.restore(s.world))
+    room.order = s.order ?? []
+    return room
   }
 
   get empty(): boolean {
@@ -162,6 +180,7 @@ export class Room {
 
   private bind(ws: WebSocket, corpId: string, name: string): void {
     this.members.set(ws, { ws, corpId, name })
+    this.emptyAt = null
   }
 
   handleClose(ws: WebSocket): void {
@@ -169,6 +188,7 @@ export class Room {
     if (!m) return
     this.members.delete(ws)
     this.world.setOnline(m.corpId, false)
+    if (this.members.size === 0) this.emptyAt = Date.now()
     this.broadcastLobby()
   }
 
@@ -245,7 +265,17 @@ export class RoomRegistry {
     if (room) {
       room.handleClose(ws)
       this.socketRoom.delete(ws)
-      if (room.empty) this.rooms.delete(room.code)
+      // a running match is kept when it empties (players can reconnect / it persists);
+      // a lobby or finished room is cleaned up immediately
+      if (room.empty && room.world.phase !== 'running') this.rooms.delete(room.code)
+    }
+  }
+
+  /** drop rooms that have been empty (abandoned) longer than ttlMs — keeps abandoned
+   * in-progress matches from ticking forever after everyone disconnects */
+  sweep(now: number, ttlMs: number): void {
+    for (const room of [...this.rooms.values()]) {
+      if (room.empty && room.emptyForMs(now) > ttlMs) this.rooms.delete(room.code)
     }
   }
 
@@ -260,6 +290,30 @@ export class RoomRegistry {
 
   all(): Room[] {
     return [...this.rooms.values()]
+  }
+
+  /** serialize in-progress matches to one JSON string (for periodic / shutdown persistence) */
+  snapshot(): string {
+    const running = [...this.rooms.values()].filter((r) => r.world.phase === 'running')
+    return JSON.stringify(running.map((r) => r.serialize()))
+  }
+
+  /** restore in-progress matches from a persisted snapshot on boot. Members reconnect
+   * on their own (reattach-by-name), so restored rooms start empty and resume the sim. */
+  loadFrom(json: string): number {
+    let n = 0
+    try {
+      const arr = JSON.parse(json) as { code: string; order?: string[]; world: unknown }[]
+      for (const ro of arr) {
+        const room = Room.restore(ro)
+        if (room.world.phase !== 'running') continue
+        this.rooms.set(room.code, room)
+        n += 1
+      }
+    } catch {
+      /* corrupt snapshot — start fresh */
+    }
+    return n
   }
 }
 

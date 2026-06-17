@@ -987,6 +987,47 @@ export class World {
       log: [...this.log],
     }
   }
+
+  // ---- persistence (raw state dump so no field can be missed) ----
+
+  serialize(): Record<string, unknown> {
+    return {
+      seed: this.seed,
+      t: this.t,
+      phase: this.phase,
+      paused: this.paused,
+      period: this.period,
+      quota: this.quota,
+      periodEndsAt: this.periodEndsAt,
+      winnerCorpId: this.winnerCorpId,
+      companyArrivalsCount: this.companyArrivalsCount,
+      companyArrivalAccumulator: this.companyArrivalAccumulator,
+      arrivalCounter: this.arrivalCounter,
+      naturalTotal: this.naturalTotal,
+      asteroids: [...this.asteroids.values()],
+      corps: [...this.corps.values()],
+      log: this.log,
+    }
+  }
+
+  static restore(s: any): World {
+    const w = new World(s.seed)
+    w.t = s.t
+    w.phase = s.phase
+    w.paused = s.paused
+    w.period = s.period
+    w.quota = s.quota
+    w.periodEndsAt = s.periodEndsAt
+    w.winnerCorpId = s.winnerCorpId
+    w.companyArrivalsCount = s.companyArrivalsCount ?? 0
+    w.companyArrivalAccumulator = s.companyArrivalAccumulator ?? 0
+    w.arrivalCounter = s.arrivalCounter ?? 0
+    w.naturalTotal = s.naturalTotal ?? 0
+    w.asteroids = new Map((s.asteroids as SimAsteroid[]).map((a) => [a.id, a]))
+    w.corps = new Map((s.corps as SimCorp[]).map((c) => [c.id, c]))
+    w.log = s.log ?? []
+    return w
+  }
 }
 
 function roundStorage(s: Partial<Record<ResourceType, number>>): Partial<Record<ResourceType, number>> {

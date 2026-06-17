@@ -360,6 +360,27 @@ assert(final.asteroids.some((a) => a.isCompany), 'company asteroids are flagged 
   assert(maxDeployed >= 2, 'one hauler deploys two miners in a single trip (2-miner bay milk run)')
 }
 
+// ---- v7: persistence (serialize → restore round-trip) ----
+{
+  const w = new World(31337)
+  w.addCorp('P', 'Persist', 0x55ccff)
+  w.start()
+  w.applyCommand('P', { kind: 'buyMiner' })
+  for (let i = 0; i < 40 * SIM_HZ; i++) w.tick(dt) // build up some live state
+  const before = w.snapshot()
+  const json = JSON.stringify(w.serialize()) // exercise the real serialize → JSON → restore path
+  const restored = World.restore(JSON.parse(json))
+  const after = restored.snapshot()
+  assert(after.phase === before.phase && after.period === before.period, 'restore preserves match phase + period')
+  assert(Math.abs(after.t - before.t) < 0.001, 'restore preserves the sim clock')
+  assert(after.asteroids.length === before.asteroids.length, 'restore preserves the asteroid field')
+  assert(after.corps[0].credits === before.corps[0].credits, 'restore preserves corp credits')
+  assert(after.corps[0].ships[0].fuel === before.corps[0].ships[0].fuel, 'restore preserves ship fuel')
+  // the restored world keeps simulating from where it left off
+  restored.tick(dt)
+  assert(restored.snapshot().t > before.t, 'a restored match resumes ticking')
+}
+
 if (failures > 0) {
   console.error(`\n${failures} assertion(s) failed`)
   process.exit(1)
