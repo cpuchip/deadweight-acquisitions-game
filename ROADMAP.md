@@ -72,6 +72,25 @@ The big one. Changes the competitive feel toward more micromanagement.
 - Lobby chat; spectator + camera-framing polish.
 - Fix the **auto-deploy webhook** (currently deploys are manual `compose.deploy`).
 
+## Next features — Plan B (ratified 2026-06-17, MP-native depth; build after the UI polish)
+
+After the SP audit (parity is a close faithful *adaptation*; the un-ported items are SP
+manual-micro we deliberately auto-manage), Michael picked the MP-native depth path:
+
+- **Contested salvage** — orphaned nets are currently owner-only. Make them grabbable by
+  ANY corp, so you can raid a rival's drifting nets when they over-extend. Real PvP
+  tension; small build (relax the owner check in dispatch + render orphans neutrally + a
+  contest/steal log line). The OrphanNetSnap already exists.
+- **Catastrophic failure as stakes** — let a chronically un-serviced miner actually FAIL
+  (lost), so over-claiming (more rocks than your haulers can service) has a real cost.
+  Needs failure to be *reachable* despite auto-service — e.g., a miner whose hauler can't
+  keep up (far/contested rock) wears past the cap and risks failure. Punishes greed,
+  rewards a balanced fleet. Tune so normal play rarely triggers it.
+
+NOT doing (SP manual-micro that fights the auto-dispatched MP): RCS fuel, nets-as-objects
++ manual collection, manual miner servicing states (dark/station-repair/resupply), ship→
+miner charge toggle, granular spare-nets bookkeeping.
+
 ## Ratified 2026-06-17
 
 - **Target = FULL PARITY (v3 → v6, + v7 polish).** Michael wants Dave's whole game,

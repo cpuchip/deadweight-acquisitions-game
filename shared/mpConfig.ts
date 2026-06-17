@@ -52,6 +52,12 @@ export const MINER_SLOTS = 2 // miners a hauler can carry out per trip (Dave's 2
 
 export const ARRIVAL_RADIUS = 28 // world units, "close enough" to a point
 
+// --- on-station layout (faithful to SP: things sit AROUND a rock, not on top of it) ---
+export const MINER_PARK_OFFSET = 22 // a deployed miner sits this far above its asteroid
+export const NET_RING_RADIUS = 18 // tethered nets ring the asteroid at this radius
+export const SHIP_PARK_RADIUS = 35 // a hauler parks/orbits this far from the rock it services
+export const SHIP_PARK_ORBIT_RATE = 0.4 // rad/s the parked hauler orbits the rock
+
 // --- v6 hauler resources (mirror Dave's Ship.ts; auto-serviced at base, MP-safe) ---
 // Fuel drains while thrusting and tops off (for a fee) at base on every return, so it
 // never strands in the deploy→shuttle→base loop — it's a visible bar + a credit sink.

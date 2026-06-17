@@ -58,6 +58,9 @@ import {
   MINER_DEPLOY_SECONDS,
   NET_COLLECT_SECONDS,
   MINER_SLOTS,
+  MINER_PARK_OFFSET,
+  SHIP_PARK_RADIUS,
+  SHIP_PARK_ORBIT_RATE,
   HAULER_FUEL_MAX,
   HAULER_FUEL_DRAIN_PER_SEC,
   HAULER_BATTERY_MAX,
@@ -103,6 +106,8 @@ interface SimShip {
   targetAsteroidId: string | null
   /** an orphaned net cluster this hauler is recovering */
   targetOrphanId: string | null
+  /** angle of this hauler's parking orbit around the rock it's servicing */
+  parkAngle: number
   /** miners loaded in the bay, awaiting deployment (0..MINER_SLOTS) */
   minersAboard: number
   /** the rocks this hauler will deploy its bay miners at, in order (milk run) */
@@ -165,6 +170,16 @@ type SimAsteroid = AsteroidData & { claimedBy: string | null }
 
 function shipCapacity(s: SimShip): number {
   return CARGO_CAPACITY_TIERS[s.cargoLevel] ?? CARGO_CAPACITY_TIERS[0]
+}
+
+/** 0..1 progress of the hauler's current timed action (for the transfer bar) */
+function shipProgress(s: SimShip): number {
+  let max = 0
+  if (s.phase === 'deploying') max = MINER_DEPLOY_SECONDS
+  else if (s.phase === 'collecting') max = NET_COLLECT_SECONDS
+  else if (s.phase === 'unloading') max = UNLOAD_SECONDS
+  else return 0
+  return max > 0 ? Math.max(0, Math.min(1, 1 - s.timer / max)) : 0
 }
 
 export class World {
@@ -259,6 +274,7 @@ export class World {
       cargoResource: null,
       targetAsteroidId: null,
       targetOrphanId: null,
+      parkAngle: Math.random() * Math.PI * 2,
       minersAboard: 0,
       deployQueue: [],
       fuel: HAULER_FUEL_MAX,
@@ -622,13 +638,21 @@ export class World {
     return corp.deployedMiners.find((m) => m.asteroidId === asteroidId)
   }
 
+  /** park a hauler in a slow orbit BESIDE the rock it's servicing (not on top of it) */
+  private parkAtRock(ship: SimShip, a: SimAsteroid, dt: number): void {
+    ship.parkAngle += SHIP_PARK_ORBIT_RATE * dt
+    ship.x = a.x + Math.cos(ship.parkAngle) * SHIP_PARK_RADIUS
+    ship.y = a.y + Math.sin(ship.parkAngle) * SHIP_PARK_RADIUS
+    ship.angle = ship.parkAngle + Math.PI / 2 // face the orbit tangent
+  }
+
   private updateMiner(corp: SimCorp, m: SimMiner, dt: number): void {
     const prev = m.state
     const a = this.asteroids.get(m.asteroidId)
-    // a deployed miner is attached to its rock — it rides the orbit with it
+    // a deployed miner sits just ABOVE its rock (not on top), riding its orbit — faithful to SP
     if (a) {
       m.x = a.x
-      m.y = a.y
+      m.y = a.y - MINER_PARK_OFFSET
     }
     if (!a || a.currentQuantity <= 0) {
       m.state = 'depleted'
@@ -695,10 +719,7 @@ export class World {
 
       case 'deploying': {
         const a = ship.targetAsteroidId ? this.asteroids.get(ship.targetAsteroidId) : undefined
-        if (a) {
-          ship.x = a.x // dock at the rock so the hauler rides its orbit
-          ship.y = a.y
-        }
+        if (a) this.parkAtRock(ship, a, dt) // orbit beside the rock while deploying
         ship.timer -= dt
         if (ship.timer > 0) return
         if (a && !this.minerAt(corp, a.id)) {
@@ -733,10 +754,7 @@ export class World {
 
       case 'collecting': {
         const ast = ship.targetAsteroidId ? this.asteroids.get(ship.targetAsteroidId) : undefined
-        if (ast) {
-          ship.x = ast.x // stay docked at the rock as it drifts
-          ship.y = ast.y
-        }
+        if (ast) this.parkAtRock(ship, ast, dt) // orbit beside the rock while collecting
         ship.timer -= dt
         if (ship.timer > 0) return
         const miner = ship.targetAsteroidId ? this.minerAt(corp, ship.targetAsteroidId) : undefined
@@ -1038,6 +1056,7 @@ export class World {
         targetAsteroidId: s.targetAsteroidId,
         carryingMiner: s.minersAboard > 0,
         minersAboard: s.minersAboard,
+        progress: shipProgress(s),
         fuel: Math.round(s.fuel),
         battery: Math.round(s.battery),
       })),

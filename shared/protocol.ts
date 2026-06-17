@@ -82,6 +82,8 @@ export interface ShipSnap {
   carryingMiner: boolean
   /** miners loaded in the bay (0..MINER_SLOTS) — for the attachment-point display */
   minersAboard: number
+  /** 0..1 progress of the current timed action (deploying / collecting / unloading) */
+  progress: number
   /** thruster fuel remaining (0..HAULER_FUEL_MAX); tops off at base for a fee */
   fuel: number
   /** battery charge (0..HAULER_BATTERY_MAX); recharges while parked */

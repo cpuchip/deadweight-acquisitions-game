@@ -12,7 +12,7 @@ import {
   mpCameraTarget,
 } from '../../state/mpStore'
 import { sendCommand } from '../../net/mpClient'
-import { PLANET_RADIUS } from '../../../shared/mpConfig'
+import { PLANET_RADIUS, NET_RING_RADIUS } from '../../../shared/mpConfig'
 import type { WorldSnapshot, AsteroidSnap, ShipSnap, MinerSnap, CorpSnap } from '../../../shared/protocol'
 
 const SIZE_RADIUS: Record<string, number> = { small: 7, medium: 11, large: 17 }
@@ -318,9 +318,11 @@ export class MultiplayerScene extends Phaser.Scene {
     g.strokeCircle(0, 0, PR)
 
     // asteroids
+    const astPos = new Map<string, { x: number; y: number }>()
     for (const a of this.snap.asteroids) {
       const r = SIZE_RADIUS[a.sizeCategory] ?? 8
       const p = this.smooth(a.id, a.x, a.y)
+      astPos.set(a.id, p)
       // company asteroids (the richer arrivals) wear a soft gold halo
       if (a.isCompany) {
         g.lineStyle(1.5, 0xffd766, 0.55)
@@ -360,12 +362,13 @@ export class MultiplayerScene extends Phaser.Scene {
           g.lineStyle(2, 0xffffff, 1)
           g.strokeCircle(p.x, p.y, 13)
         }
-        // tethered nets ringing the miner
+        // tethered nets ring the ASTEROID (faithful to SP), not the miner above it
+        const ap = astPos.get(m.asteroidId) ?? p
         g.fillStyle(0xffcc44, 0.95)
         const n = Math.min(m.netsReady, 4)
         for (let i = 0; i < n; i++) {
           const ang = (i / 4) * Math.PI * 2 - Math.PI / 2
-          g.fillCircle(p.x + Math.cos(ang) * 11, p.y + Math.sin(ang) * 11, 2.2)
+          g.fillCircle(ap.x + Math.cos(ang) * NET_RING_RADIUS, ap.y + Math.sin(ang) * NET_RING_RADIUS, 2.6)
         }
       }
     }
@@ -434,6 +437,7 @@ export class MultiplayerScene extends Phaser.Scene {
         const p = this.smooth(s.id, tx, ty)
         this.drawShip(p.x, p.y, s.angle, c.color)
         this.drawAttachments(p.x, p.y, s)
+        if (s.progress > 0) this.drawProgress(p.x, p.y, s.progress)
       }
     }
 
@@ -467,18 +471,18 @@ export class MultiplayerScene extends Phaser.Scene {
     const sa = Math.sin(s.angle)
     const fwd = { x: ca, y: sa } // along the hull's length
     const side = { x: -sa, y: ca } // the hull's "down" (perpendicular)
-    const slotH = 6 // half-extent across the row (the fill axis)
-    const sideDist = 9 // how far below the hull the row hangs
+    const slotH = 8 // half-extent across the row (the fill axis)
+    const sideDist = 15 // how far below the hull the row hangs
     const cx = x + side.x * sideDist
     const cy = y + side.y * sideDist
     const netFrac = s.cargoCapacity > 0 ? Math.min(1, s.cargo / s.cargoCapacity) : 0
     const slots = [
-      { hw: 3, frac: netFrac, fill: 0xffcc44 }, // S: net-store
-      { hw: 3, frac: 0, fill: 0xffffff }, // S: spare
-      { hw: 4.5, frac: s.minersAboard >= 1 ? 1 : 0, fill: 0xffffff }, // M: miner bay
-      { hw: 4.5, frac: s.minersAboard >= 2 ? 1 : 0, fill: 0xffffff }, // M: miner bay
+      { hw: 4, frac: netFrac, fill: 0xffcc44 }, // S: net-store
+      { hw: 4, frac: 0, fill: 0xffffff }, // S: spare
+      { hw: 6, frac: s.minersAboard >= 1 ? 1 : 0, fill: 0xffffff }, // M: miner bay
+      { hw: 6, frac: s.minersAboard >= 2 ? 1 : 0, fill: 0xffffff }, // M: miner bay
     ]
-    const gap = 2
+    const gap = 5
     const totalW = slots.reduce((n, sl) => n + sl.hw * 2, 0) + gap * (slots.length - 1)
     let off = -totalW / 2
     for (const sl of slots) {
@@ -510,6 +514,15 @@ export class MultiplayerScene extends Phaser.Scene {
       g.fillStyle(fill, 0.9)
       g.fillPoints([pt(-hw, hh), pt(hw, hh), pt(hw, topH), pt(-hw, topH)], true)
     }
+  }
+
+  /** a small progress ring around a hauler mid-transfer (deploy / collect / unload) */
+  private drawProgress(x: number, y: number, frac: number): void {
+    const g = this.gfx
+    g.lineStyle(2.5, 0x88ddff, 0.9)
+    g.beginPath()
+    g.arc(x, y, 24, -Math.PI / 2, -Math.PI / 2 + Math.min(1, frac) * Math.PI * 2, false)
+    g.strokePath()
   }
 
   private drawShip(x: number, y: number, angle: number, color: number): void {

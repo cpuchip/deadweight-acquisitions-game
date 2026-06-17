@@ -183,12 +183,16 @@
         {selShip.ship.name} · {selShip.corp.name}{selShip.corp.id === $mpYouCorpId ? ' (you)' : ''}
       </div>
       <div class="sel-row"><span>state</span><span>{SHIP_STATE[selShip.ship.phase] ?? selShip.ship.phase}</span></div>
-      <div class="sel-row"><span>cargo</span><span>{selShip.ship.cargo} / {selShip.ship.cargoCapacity}{selShip.ship.cargoResource ? ' · ' + selShip.ship.cargoResource : ''}</span></div>
+      <div class="sel-cap">ATTACHMENTS</div>
+      <div class="sel-row"><span>net-store [S]</span><span>{selShip.ship.cargo} / {selShip.ship.cargoCapacity}{selShip.ship.cargoResource ? ' ' + selShip.ship.cargoResource : ''}</span></div>
+      <div class="meter"><span class="meter-fill net" style="width:{(selShip.ship.cargo / selShip.ship.cargoCapacity) * 100}%"></span></div>
+      <div class="sel-row"><span>miner bay 1 [M]</span><span class:on={selShip.ship.minersAboard >= 1}>{selShip.ship.minersAboard >= 1 ? 'miner' : 'empty'}</span></div>
+      <div class="sel-row"><span>miner bay 2 [M]</span><span class:on={selShip.ship.minersAboard >= 2}>{selShip.ship.minersAboard >= 2 ? 'miner' : 'empty'}</span></div>
+      <div class="sel-cap">FUEL / POWER</div>
       <div class="sel-row"><span>fuel</span><span>{selShip.ship.fuel} / {HAULER_FUEL_MAX}</span></div>
       <div class="meter"><span class="meter-fill fuel" style="width:{(selShip.ship.fuel / HAULER_FUEL_MAX) * 100}%"></span></div>
       <div class="sel-row"><span>battery</span><span>{selShip.ship.battery} / {HAULER_BATTERY_MAX}</span></div>
       <div class="meter"><span class="meter-fill batt" style="width:{(selShip.ship.battery / HAULER_BATTERY_MAX) * 100}%"></span></div>
-      <div class="sel-row"><span>miner bays</span><span>{selShip.ship.minersAboard} / {MINER_SLOTS} loaded</span></div>
     </div>
   {/if}
 
@@ -468,6 +472,20 @@
   }
   .meter-fill.cond.worn {
     background: #d8a23a;
+  }
+  .meter-fill.net {
+    background: #ffcc44;
+  }
+  .sel-cap {
+    font-size: 8px;
+    color: #3a6a8a;
+    letter-spacing: 1px;
+    margin: 7px 0 3px;
+    border-top: 1px solid #16242e;
+    padding-top: 4px;
+  }
+  .sel-row .on {
+    color: #aaffcc;
   }
   .sel {
     position: absolute;
