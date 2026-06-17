@@ -6,6 +6,7 @@ import {
   mpYouCorpId,
   mpSelectedAsteroid,
   mpBasePanelOpen,
+  mpQuickClaim,
 } from '../../state/mpStore'
 import { sendCommand } from '../../net/mpClient'
 import { PLANET_RADIUS } from '../../../shared/mpConfig'
@@ -103,13 +104,13 @@ export class MultiplayerScene extends Phaser.Scene {
       return
     }
     mpSelectedAsteroid.set(a.id)
-    const me = get(mpYouCorpId)
-    if (a.claimedBy === me) {
-      sendCommand({ kind: 'undesignate', asteroidId: a.id })
-    } else if (!a.claimedBy) {
-      sendCommand({ kind: 'designate', asteroidId: a.id })
+    // Dave's default: click only SELECTS — the panel's "Designate for Mining" button
+    // dispatches. The quick-claim toggle restores click-to-designate.
+    if (get(mpQuickClaim)) {
+      const me = get(mpYouCorpId)
+      if (!a.claimedBy) sendCommand({ kind: 'designate', asteroidId: a.id })
+      else if (a.claimedBy === me) sendCommand({ kind: 'undesignate', asteroidId: a.id })
     }
-    // contested (someone else owns it): selection only, no command
   }
 
   private nearestAsteroid(wx: number, wy: number): AsteroidSnap | null {

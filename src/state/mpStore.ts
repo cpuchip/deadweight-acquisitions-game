@@ -22,3 +22,5 @@ export const mpSnapshot = writable<WorldSnapshot | null>(null)
 export const mpSelectedAsteroid = writable<string | null>(null)
 /** the base/station menu (market, shipyard, equipment) — opens on clicking your base */
 export const mpBasePanelOpen = writable<boolean>(false)
+/** quick-claim: when on, left-click also designates (Dave's default is select-only) */
+export const mpQuickClaim = writable<boolean>(false)

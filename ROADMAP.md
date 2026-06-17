@@ -72,13 +72,18 @@ The big one. Changes the competitive feel toward more micromanagement.
 - Lobby chat; spectator + camera-framing polish.
 - Fix the **auto-deploy webhook** (currently deploys are manual `compose.deploy`).
 
-## Open questions for ratification
+## Ratified 2026-06-17
 
-1. **Auto-claim:** keep it (you like it) as a default-**on** toggle with Dave's
-   select-then-designate as the alternative? Or make Dave's flow the default?
-2. **How deep do we go?** v3–v4 get "feels faithful" + economy depth fast. v5–v6 are
-   the deep logistics sim — a lot of build for a "silly" game, and they add
-   *micromanagement* that's great solo but may be less fun in a friends' race.
-3. **The honest tension:** Dave's depth is a single-player optimization puzzle. A
-   competitive multiplayer race might actually be *more* fun streamlined (v3–v4) than
-   fully simulated (v5–v6). Worth deciding the target before building v5+.
+- **Target = FULL PARITY (v3 → v6, + v7 polish).** Michael wants Dave's whole game,
+  faithfully, with multiplayer. Build phase by phase; verify + deploy each.
+- **Designation default = Dave's select→designate.** Click selects; press "Designate
+  for Mining" to dispatch. Auto-claim becomes an opt-in **"quick-claim" toggle**
+  (default off).
+- Honest tension acknowledged + accepted: the deep sim (v5–v6) adds real
+  micromanagement to the race. Full parity is the call anyway.
+
+## Progress
+
+- **v3 started 2026-06-17:** designation UX flipped to Dave's default (click selects;
+  panel button designates) + quick-claim toggle. Next in v3: minimap, EntityPanel
+  build-out, bigger textured planet.

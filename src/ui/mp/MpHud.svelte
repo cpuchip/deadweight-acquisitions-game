@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { mpSnapshot, mpYouCorpId, mpConnection, mpSelectedAsteroid, mpBasePanelOpen, mpIsHost } from '../../state/mpStore'
+  import { mpSnapshot, mpYouCorpId, mpConnection, mpSelectedAsteroid, mpBasePanelOpen, mpIsHost, mpQuickClaim } from '../../state/mpStore'
   import { sendCommand, pauseMatch, quitMatch } from '../../net/mpClient'
   import type { CorpSnap, AsteroidSnap } from '../../../shared/protocol'
 
@@ -42,6 +42,9 @@
   }
   function quit(): void {
     quitMatch()
+  }
+  function toggleQuickClaim(): void {
+    mpQuickClaim.update((v) => !v)
   }
   function claim(a: AsteroidSnap): void {
     if (a.claimedBy === $mpYouCorpId) sendCommand({ kind: 'undesignate', asteroidId: a.id })
@@ -102,6 +105,9 @@
   {#if me && me.alive}
     <div class="actions">
       <button class="act" on:click={openBase}>◉ BASE — buy miners · sell ore</button>
+      <button class="act quick" class:on={$mpQuickClaim} on:click={toggleQuickClaim} title="When on, clicking an asteroid claims it immediately (otherwise: select, then Designate)">
+        ⚡ quick-claim: {$mpQuickClaim ? 'on' : 'off'}
+      </button>
       <div class="fleet">{shipCount} hauler{shipCount === 1 ? '' : 's'} · {me.minerCount} miner{me.minerCount === 1 ? '' : 's'} · ore {stored}/{me.storageCapacity}</div>
     </div>
   {/if}
@@ -115,7 +121,7 @@
       {#if selected.claimedBy === $mpYouCorpId}
         <button class="sel-btn release" on:click={() => claim(selected)}>RELEASE CLAIM</button>
       {:else if !selected.claimedBy}
-        <button class="sel-btn" on:click={() => claim(selected)} disabled={!me || !me.alive}>CLAIM &amp; MINE</button>
+        <button class="sel-btn" on:click={() => claim(selected)} disabled={!me || !me.alive}>DESIGNATE FOR MINING</button>
       {:else}
         <div class="contested">contested — held by {corpName(selected.claimedBy)}</div>
       {/if}
@@ -303,7 +309,7 @@
   }
   .actions {
     position: absolute;
-    bottom: 12px;
+    top: 46px;
     left: 12px;
     font-family: monospace;
     pointer-events: auto;
@@ -320,6 +326,20 @@
   }
   .act:hover {
     background: #235b7d;
+  }
+  .act.quick {
+    margin-top: 6px;
+    display: block;
+    background: rgba(20, 34, 48, 0.85);
+    border-color: #2a4a5a;
+    color: #7a9aaa;
+    font-size: 11px;
+    padding: 6px 12px;
+  }
+  .act.quick.on {
+    background: #2f4a22;
+    border-color: #6a9a4a;
+    color: #cceeaa;
   }
   .act:disabled {
     opacity: 0.45;
