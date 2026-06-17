@@ -315,7 +315,7 @@ export class World {
       if (!corp.alive) continue
       if (corp.autoDesignate) this.autoDesignate(corp)
       this.dispatch(corp)
-      for (const m of corp.deployedMiners) this.updateMiner(m, dt)
+      for (const m of corp.deployedMiners) this.updateMiner(corp, m, dt)
       for (const ship of corp.ships) this.updateShip(corp, ship, dt)
       // drop claims with no resource AND no deployed miner left
       corp.claims = corp.claims.filter((id) => {
@@ -376,22 +376,25 @@ export class World {
     return corp.deployedMiners.find((m) => m.asteroidId === asteroidId)
   }
 
-  private updateMiner(m: SimMiner, dt: number): void {
+  private updateMiner(corp: SimCorp, m: SimMiner, dt: number): void {
+    const prev = m.state
     const a = this.asteroids.get(m.asteroidId)
     if (!a || a.currentQuantity <= 0) {
       m.state = 'depleted'
-      return
-    }
-    if (m.oreReady >= MINER_ORE_CAP) {
+    } else if (m.oreReady >= MINER_ORE_CAP) {
       m.state = 'net-starved'
-      return
+    } else {
+      const amount = Math.min(MINE_RATE * dt, a.currentQuantity, MINER_ORE_CAP - m.oreReady)
+      if (amount > 0) {
+        a.currentQuantity -= amount
+        m.oreReady += amount
+      }
+      m.state = m.oreReady >= MINER_ORE_CAP ? 'net-starved' : 'mining'
     }
-    const amount = Math.min(MINE_RATE * dt, a.currentQuantity, MINER_ORE_CAP - m.oreReady)
-    if (amount > 0) {
-      a.currentQuantity -= amount
-      m.oreReady += amount
+    // beacon: announce once when a miner first fills up (its nets need a hauler)
+    if (m.state === 'net-starved' && prev !== 'net-starved') {
+      this.pushLog(`⚠ ${corp.name}'s miner is full of nets — send a hauler.`)
     }
-    m.state = m.oreReady >= MINER_ORE_CAP ? 'net-starved' : 'mining'
   }
 
   private updateShip(corp: SimCorp, ship: SimShip, dt: number): void {

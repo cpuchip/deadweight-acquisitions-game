@@ -6,12 +6,13 @@ import {
   mpYouCorpId,
   mpSelectedAsteroid,
   mpSelectedShip,
+  mpSelectedMiner,
   mpBasePanelOpen,
   mpQuickClaim,
 } from '../../state/mpStore'
 import { sendCommand } from '../../net/mpClient'
 import { PLANET_RADIUS } from '../../../shared/mpConfig'
-import type { WorldSnapshot, AsteroidSnap, ShipSnap, CorpSnap } from '../../../shared/protocol'
+import type { WorldSnapshot, AsteroidSnap, ShipSnap, MinerSnap, CorpSnap } from '../../../shared/protocol'
 
 const SIZE_RADIUS: Record<string, number> = { small: 7, medium: 11, large: 17 }
 const CLICK_TOLERANCE = 6 // screen px movement under which a pointerup counts as a click
@@ -97,6 +98,16 @@ export class MultiplayerScene extends Phaser.Scene {
       mpBasePanelOpen.set(true)
       mpSelectedAsteroid.set(null)
       mpSelectedShip.set(null)
+      mpSelectedMiner.set(null)
+      return
+    }
+
+    // a deployed miner sits on its asteroid — it takes priority so you can inspect it
+    const miner = this.nearestMiner(world.x, world.y)
+    if (miner) {
+      mpSelectedMiner.set(miner.id)
+      mpSelectedShip.set(null)
+      mpSelectedAsteroid.set(null)
       return
     }
 
@@ -105,6 +116,7 @@ export class MultiplayerScene extends Phaser.Scene {
     if (ship) {
       mpSelectedShip.set(ship.id)
       mpSelectedAsteroid.set(null)
+      mpSelectedMiner.set(null)
       return
     }
 
@@ -112,10 +124,12 @@ export class MultiplayerScene extends Phaser.Scene {
     if (!a) {
       mpSelectedAsteroid.set(null)
       mpSelectedShip.set(null)
+      mpSelectedMiner.set(null)
       return
     }
     mpSelectedAsteroid.set(a.id)
     mpSelectedShip.set(null)
+    mpSelectedMiner.set(null)
     // Dave's default: click only SELECTS — the panel's "Designate for Mining" button
     // dispatches. The quick-claim toggle restores click-to-designate.
     if (get(mpQuickClaim)) {
@@ -136,6 +150,19 @@ export class MultiplayerScene extends Phaser.Scene {
       }
     }
     return best?.s ?? null
+  }
+
+  private nearestMiner(wx: number, wy: number): MinerSnap | null {
+    if (!this.snap) return null
+    let best: { m: MinerSnap; d: number } | null = null
+    for (const c of this.snap.corps) {
+      if (!c.alive) continue
+      for (const m of c.miners) {
+        const d = Math.hypot(m.x - wx, m.y - wy)
+        if (d <= 13 && (!best || d < best.d)) best = { m, d }
+      }
+    }
+    return best?.m ?? null
   }
 
   private nearestAsteroid(wx: number, wy: number): AsteroidSnap | null {
@@ -199,13 +226,26 @@ export class MultiplayerScene extends Phaser.Scene {
     }
 
     // deployed miners (at asteroids) + their tethered nets
+    const selectedMiner = get(mpSelectedMiner)
+    const pulse = 0.5 + 0.5 * Math.sin(this.time.now / 220) // 0..1 beacon throb
     for (const c of this.snap.corps) {
       if (!c.alive) continue
       for (const m of c.miners) {
+        // beacon: a net-starved (full) or depleted miner throbs a ring for recovery
+        if (m.state === 'net-starved' || m.state === 'depleted') {
+          const beacon = m.state === 'net-starved' ? 0xffaa44 : 0x888888
+          g.lineStyle(2, beacon, 0.25 + 0.55 * pulse)
+          g.strokeCircle(m.x, m.y, 9 + pulse * 6)
+        }
         g.fillStyle(c.color, 1)
         g.fillRect(m.x - 4, m.y - 4, 8, 8)
         g.lineStyle(1.5, m.state === 'net-starved' ? 0xffaa44 : m.state === 'depleted' ? 0x888888 : 0xffffff, 0.9)
         g.strokeRect(m.x - 5, m.y - 5, 10, 10)
+        // selection ring
+        if (m.id === selectedMiner) {
+          g.lineStyle(2, 0xffffff, 1)
+          g.strokeCircle(m.x, m.y, 13)
+        }
         // tethered nets ringing the miner
         g.fillStyle(0xffcc44, 0.95)
         const n = Math.min(m.netsReady, 4)

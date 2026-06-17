@@ -22,6 +22,8 @@ export const mpSnapshot = writable<WorldSnapshot | null>(null)
 export const mpSelectedAsteroid = writable<string | null>(null)
 /** ship the player has selected on the map (for the ship detail panel) */
 export const mpSelectedShip = writable<string | null>(null)
+/** deployed miner the player has selected on the map (for the miner detail panel) */
+export const mpSelectedMiner = writable<string | null>(null)
 /** the base/station menu (market, shipyard, equipment) — opens on clicking your base */
 export const mpBasePanelOpen = writable<boolean>(false)
 /** quick-claim: when on, left-click also designates (Dave's default is select-only) */

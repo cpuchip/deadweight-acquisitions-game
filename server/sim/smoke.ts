@@ -157,6 +157,47 @@ assert(
   assert(w.snapshot().corps[0].tonnage > 0, 'deep loop delivered ore (deploy -> net -> shuttle -> base)')
 }
 
+// ---- v5b: net-starved beacon + recall ----
+{
+  const w = new World(777)
+  w.addCorp('S', 'Starver', 0x55ccff)
+  w.start()
+  w.applyCommand('S', { kind: 'buyMiner' })
+  // designate the farthest LARGE rock: the single hauler's round trip can't keep the
+  // miner's net buffer drained, so it must net-starve (and beacon) at least once
+  const snap0 = w.snapshot()
+  const base = snap0.corps[0]
+  let far: { id: string; d: number } | null = null
+  for (const a of snap0.asteroids) {
+    if (a.sizeCategory !== 'large') continue
+    const d = Math.hypot(a.x - base.baseX, a.y - base.baseY)
+    if (!far || d > far.d) far = { id: a.id, d }
+  }
+  assert(!!far, 'found a far large asteroid to starve a miner against')
+  w.applyCommand('S', { kind: 'designate', asteroidId: far!.id })
+
+  let everStarved = false
+  for (let i = 0; i < 200 * SIM_HZ; i++) {
+    w.tick(dt)
+    if (w.snapshot().corps[0].miners.some((m) => m.state === 'net-starved')) {
+      everStarved = true
+      break
+    }
+  }
+  assert(everStarved, 'a miner whose hauler cannot keep up goes net-starved (beacon trips)')
+  assert(w.snapshot().log.some((l) => l.includes('full of nets')), 'net-starved miner pushes a beacon alert to the log')
+
+  // recall = the miner panel's RECALL button (undesignate the rock): the deployed
+  // miner returns to inventory and the claim is freed; the bought miner is kept
+  const before = w.snapshot().corps[0]
+  const ownedBefore = before.minerCount
+  w.applyCommand('S', { kind: 'undesignate', asteroidId: far!.id })
+  const after = w.snapshot().corps[0]
+  assert(after.miners.every((m) => m.asteroidId !== far!.id), 'recall removes the deployed miner from the rock')
+  assert(!w.snapshot().asteroids.find((a) => a.id === far!.id)?.claimedBy, 'recall frees the claim')
+  assert(after.minerCount === ownedBefore, 'recall keeps the owned miner (returns it to inventory)')
+}
+
 if (failures > 0) {
   console.error(`\n${failures} assertion(s) failed`)
   process.exit(1)

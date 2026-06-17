@@ -57,6 +57,16 @@
       }
       ctx.globalAlpha = 1
     }
+
+    // net-starved miners beacon amber — spot a stuck miner field-wide
+    ctx.fillStyle = '#ffaa44'
+    for (const c of w.corps) {
+      if (!c.alive) continue
+      for (const m of c.miners) {
+        if (m.state !== 'net-starved') continue
+        ctx.fillRect(toX(m.x) - 1.5, toY(m.y) - 1.5, 3, 3)
+      }
+    }
   }
 
   $: show = $mpConnection === 'connected' && !!$mpSnapshot && $mpSnapshot.phase !== 'lobby'

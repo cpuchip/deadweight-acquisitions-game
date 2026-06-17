@@ -115,6 +115,21 @@ on push is fixed (GitHub App granted access to the repo).
     / hauling / unloading. Base panel + ship panel updated to the pool model.
   - Verified: smoke + wstest (deploy + shuttle + tonnage) green local + **prod**; browser
     e2e (auto-mined 53t via deploy→net→shuttle).
-- **v5b NEXT (the polish):** orphaned-net recovery (designate-for-collection), beacons
-  for net-starved miners, **multiple miners per hauler** (attachment slots — net-store +
-  2 medium), miner/net detail panels.
+- **v5b-1 COMPLETE 2026-06-17 — read the loop + recall:**
+  - **Miner detail panel** — click a deployed miner (it takes click priority over the
+    asteroid it sits on) → resource / owning corp / state / nets ready / host-rock
+    remaining, plus a **RECALL MINER** button (your corp only; returns the bought miner
+    to inventory + frees the claim). ✓
+  - **Beacons** — a net-starved (full) or depleted miner throbs a pulsing ring in the
+    scene, and net-starved miners blip amber on the minimap so you can spot a stuck one
+    field-wide. ✓
+  - **Net-starved alert** — the moment a miner first fills its net buffer it pushes a
+    "⚠ your miner is full of nets — send a hauler" line to the event log, and the fleet
+    readout shows "⚠ N full". ✓
+  - Verified: smoke (net-starved beacon trips + log alert + recall removes miner/frees
+    claim/keeps the owned miner) + typecheck + build + wstest green; browser e2e ran the
+    full deploy→deliver loop (53t) with the new render code live and **0 console errors**.
+- **v5b-2 NEXT (the logistics depth):** **multiple miners per hauler** (a "milk run" —
+  carry up to N miners out, deploy across a cluster of claimed rocks, shuttle from the
+  cluster) + **orphaned-net recovery** (nets from a recalled/depleted miner become
+  collectible salvage rather than vanishing).

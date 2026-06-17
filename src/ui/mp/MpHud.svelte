@@ -1,8 +1,8 @@
 <script lang="ts">
-  import { mpSnapshot, mpYouCorpId, mpConnection, mpSelectedAsteroid, mpSelectedShip, mpBasePanelOpen, mpIsHost, mpQuickClaim } from '../../state/mpStore'
+  import { mpSnapshot, mpYouCorpId, mpConnection, mpSelectedAsteroid, mpSelectedShip, mpSelectedMiner, mpBasePanelOpen, mpIsHost, mpQuickClaim } from '../../state/mpStore'
   import { sendCommand, pauseMatch, quitMatch } from '../../net/mpClient'
   import { MAX_CARGO_LEVEL, CARGO_UPGRADE_COSTS, CARGO_CAPACITY_TIERS } from '../../../shared/mpConfig'
-  import type { CorpSnap, AsteroidSnap, ShipSnap, WorldSnapshot } from '../../../shared/protocol'
+  import type { CorpSnap, AsteroidSnap, ShipSnap, MinerSnap, WorldSnapshot } from '../../../shared/protocol'
 
   function hex(c: number): string {
     return '#' + (c >>> 0).toString(16).padStart(6, '0')
@@ -21,6 +21,8 @@
   $: stored = me ? Math.floor(Object.values(me.storage).reduce((s, n) => s + (n ?? 0), 0)) : 0
   $: selected = selectAsteroid(world?.asteroids, $mpSelectedAsteroid)
   $: selShip = findShip(world, $mpSelectedShip)
+  $: selMiner = findMiner(world, $mpSelectedMiner)
+  $: starved = me ? me.miners.filter((m) => m.state === 'net-starved').length : 0
 
   const SHIP_STATE: Record<string, string> = {
     idle: 'idle',
@@ -30,6 +32,11 @@
     'to-base': 'hauling to base',
     unloading: 'unloading',
   }
+  const MINER_STATE: Record<string, string> = {
+    mining: 'mining',
+    'net-starved': 'full — needs a hauler',
+    depleted: 'rock depleted',
+  }
   function findShip(w: WorldSnapshot | null, id: string | null): { ship: ShipSnap; corp: CorpSnap } | null {
     if (!w || !id) return null
     for (const c of w.corps) {
@@ -37,6 +44,22 @@
       if (ship) return { ship, corp: c }
     }
     return null
+  }
+  function findMiner(w: WorldSnapshot | null, id: string | null): { miner: MinerSnap; corp: CorpSnap } | null {
+    if (!w || !id) return null
+    for (const c of w.corps) {
+      const miner = c.miners.find((m) => m.id === id)
+      if (miner) return { miner, corp: c }
+    }
+    return null
+  }
+  function minerAsteroid(id: string): AsteroidSnap | null {
+    if (!world) return null
+    return world.asteroids.find((a) => a.id === id) ?? null
+  }
+  function recall(asteroidId: string): void {
+    sendCommand({ kind: 'undesignate', asteroidId })
+    mpSelectedMiner.set(null)
   }
   $: winner = world && world.winnerCorpId ? world.corps.find((c) => c.id === world.winnerCorpId) ?? null : null
 
@@ -130,7 +153,9 @@
       <button class="act quick" class:on={$mpQuickClaim} on:click={toggleQuickClaim} title="When on, clicking an asteroid claims it immediately (otherwise: select, then Designate)">
         ⚡ quick-claim: {$mpQuickClaim ? 'on' : 'off'}
       </button>
-      <div class="fleet">{shipCount} hauler{shipCount === 1 ? '' : 's'} · {me.minerCount} miner{me.minerCount === 1 ? '' : 's'} ({me.miners.length} deployed) · ore {stored}/{me.storageCapacity}</div>
+      <div class="fleet">
+        {shipCount} hauler{shipCount === 1 ? '' : 's'} · {me.minerCount} miner{me.minerCount === 1 ? '' : 's'} ({me.miners.length} deployed) · ore {stored}/{me.storageCapacity}{#if starved}<span class="warn"> · ⚠ {starved} full</span>{/if}
+      </div>
     </div>
   {/if}
 
@@ -176,6 +201,28 @@
         {:else}
           <div class="sel-row"><span>cargo hold</span><span>MAX</span></div>
         {/if}
+      {/if}
+    </div>
+  {/if}
+
+  <!-- selected miner -->
+  {#if selMiner}
+    {@const a = minerAsteroid(selMiner.miner.asteroidId)}
+    <div class="sel miner">
+      <div class="sel-title resource-{selMiner.miner.resourceType}">
+        AUTOMINER · {selMiner.miner.resourceType.toUpperCase()}
+      </div>
+      <div class="sel-row"><span>corp</span><span style="color:{hex(selMiner.corp.color)}">{selMiner.corp.name}{selMiner.corp.id === $mpYouCorpId ? ' (you)' : ''}</span></div>
+      <div class="sel-row">
+        <span>state</span>
+        <span class:hot={selMiner.miner.state === 'net-starved'}>{MINER_STATE[selMiner.miner.state] ?? selMiner.miner.state}</span>
+      </div>
+      <div class="sel-row"><span>nets ready</span><span>{selMiner.miner.netsReady}</span></div>
+      {#if a}
+        <div class="sel-row"><span>rock</span><span>{a.currentQuantity} / {a.maxQuantity} t</span></div>
+      {/if}
+      {#if selMiner.corp.id === $mpYouCorpId}
+        <button class="sel-btn release" on:click={() => recall(selMiner.miner.asteroidId)}>RECALL MINER</button>
       {/if}
     </div>
   {/if}
@@ -398,6 +445,12 @@
     margin-top: 5px;
     font-size: 10px;
     color: #6a8a9a;
+  }
+  .fleet .warn {
+    color: #ffaa44;
+  }
+  .sel-row .hot {
+    color: #ffaa44;
   }
   .sel {
     position: absolute;
