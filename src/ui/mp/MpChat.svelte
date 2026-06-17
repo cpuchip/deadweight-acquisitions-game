@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { tick } from 'svelte'
+  import { tick, onMount } from 'svelte'
   import { mpChat, mpConnection, mpYouName } from '../../state/mpStore'
   import { sendChat } from '../../net/mpClient'
 
@@ -11,6 +11,12 @@
     return '#' + (c >>> 0).toString(16).padStart(6, '0')
   }
 
+  function scrollToEnd(): void {
+    requestAnimationFrame(() => {
+      if (list) list.scrollTop = list.scrollHeight
+    })
+  }
+
   async function submit(): Promise<void> {
     const t = draft.trim()
     if (!t) return
@@ -20,12 +26,10 @@
     if (list) list.scrollTop = list.scrollHeight
   }
 
-  // auto-scroll to the newest line as messages arrive
-  $: if ($mpChat && list) {
-    tick().then(() => {
-      if (list) list.scrollTop = list.scrollHeight
-    })
-  }
+  // auto-scroll to the newest line when a message arrives — via a store subscription,
+  // NOT a reactive `$:`. A `$:`-block that reads a bind:this ref and calls tick() flushes
+  // recursively and infinite-loops the production build (froze the lobby on connect).
+  onMount(() => mpChat.subscribe(() => scrollToEnd()))
 
   $: show = $mpConnection === 'connected'
 </script>
