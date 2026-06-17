@@ -46,6 +46,7 @@ import {
   NET_LEAKAGE,
   MINER_DEPLOY_SECONDS,
   NET_COLLECT_SECONDS,
+  MINER_SLOTS,
   HAULER_FUEL_MAX,
   HAULER_FUEL_DRAIN_PER_SEC,
   HAULER_BATTERY_MAX,
@@ -91,8 +92,10 @@ interface SimShip {
   targetAsteroidId: string | null
   /** an orphaned net cluster this hauler is recovering */
   targetOrphanId: string | null
-  /** carrying a miner out to deploy */
-  carryingMiner: boolean
+  /** miners loaded in the bay, awaiting deployment (0..MINER_SLOTS) */
+  minersAboard: number
+  /** the rocks this hauler will deploy its bay miners at, in order (milk run) */
+  deployQueue: string[]
   fuel: number
   battery: number
   timer: number
@@ -237,7 +240,8 @@ export class World {
       cargoResource: null,
       targetAsteroidId: null,
       targetOrphanId: null,
-      carryingMiner: false,
+      minersAboard: 0,
+      deployQueue: [],
       fuel: HAULER_FUEL_MAX,
       battery: HAULER_BATTERY_MAX,
       timer: 0,
@@ -324,10 +328,17 @@ export class World {
     }
     corp.deployedMiners = corp.deployedMiners.filter((m) => m.asteroidId !== asteroidId)
     for (const s of corp.ships) {
+      s.deployQueue = s.deployQueue.filter((id) => id !== asteroidId)
       if (s.targetAsteroidId === asteroidId) {
-        s.targetAsteroidId = null
-        s.carryingMiner = false
-        s.phase = s.cargo > 0 ? 'to-base' : 'idle'
+        if (s.minersAboard > 0 && s.deployQueue.length > 0) {
+          s.targetAsteroidId = s.deployQueue[0] // re-route the rest of the deploy run
+          s.phase = 'to-asteroid'
+        } else {
+          s.minersAboard = 0
+          s.deployQueue = []
+          s.targetAsteroidId = null
+          s.phase = s.cargo > 0 ? 'to-base' : 'idle'
+        }
       }
     }
   }
@@ -456,42 +467,91 @@ export class World {
     return best?.id ?? null
   }
 
-  /** Assign idle haulers to claimed asteroids — to deploy a miner, then to shuttle. */
-  private dispatch(corp: SimCorp): void {
-    const reserved = corp.ships.filter((s) => s.carryingMiner).length
-    let available = corp.minersOwned - corp.deployedMiners.length - reserved
+  private idleHauler(corp: SimCorp): SimShip | undefined {
+    return corp.ships.find(
+      (s) => s.phase === 'idle' && !s.targetAsteroidId && !s.targetOrphanId && s.minersAboard === 0,
+    )
+  }
 
+  /** Claimed rocks that want a miner — no miner yet, still has ore, and not already
+   * queued in some hauler's bay. Returned nearest-to-base first (the milk-run order). */
+  private rocksNeedingMiner(corp: SimCorp): string[] {
+    const queued = new Set<string>()
+    for (const s of corp.ships) for (const id of s.deployQueue) queued.add(id)
+    const out: { id: string; d: number }[] = []
+    for (const aid of corp.claims) {
+      const a = this.asteroids.get(aid)
+      if (!a || a.claimedBy !== corp.id || a.currentQuantity <= 0) continue
+      if (queued.has(aid)) continue
+      if (corp.deployedMiners.some((m) => m.asteroidId === aid)) continue
+      out.push({ id: aid, d: Math.hypot(a.x - corp.baseX, a.y - corp.baseY) })
+    }
+    out.sort((x, y) => x.d - y.d)
+    return out.map((o) => o.id)
+  }
+
+  /** Assign idle haulers — to shuttle deployed miners, to milk-run-deploy new ones, and
+   * to recover orphaned nets. */
+  private dispatch(corp: SimCorp): void {
+    // (1) shuttle: a claimed rock with a deployed miner + no servicing hauler gets one
     for (const aid of corp.claims) {
       const a = this.asteroids.get(aid)
       if (!a || a.claimedBy !== corp.id) continue
+      if (!corp.deployedMiners.some((m) => m.asteroidId === aid)) continue
       const serviced = corp.ships.some((s) => s.targetAsteroidId === aid && s.phase !== 'idle')
       if (serviced) continue
-      const hasMiner = corp.deployedMiners.some((m) => m.asteroidId === aid)
-      const ship = corp.ships.find((s) => s.phase === 'idle' && !s.targetAsteroidId)
+      const ship = this.idleHauler(corp)
       if (!ship) break
-      if (hasMiner) {
-        // miner already there — send a hauler to shuttle its nets
-        ship.targetAsteroidId = aid
-        ship.carryingMiner = false
-        ship.phase = 'to-asteroid'
-      } else if (available > 0 && a.currentQuantity > 0) {
-        // carry a fresh miner out to deploy
-        ship.targetAsteroidId = aid
-        ship.carryingMiner = true
-        ship.phase = 'to-asteroid'
-        available -= 1
-      }
+      ship.targetAsteroidId = aid
+      ship.phase = 'to-asteroid'
     }
 
-    // any still-idle haulers recover drifting orphaned nets (designate-for-collection,
-    // run automatically — the salvage shouldn't sit forever)
+    // (2) deploy (milk run): load an idle hauler with up to MINER_SLOTS miners and send it
+    // to deploy them across the nearest rocks that want one
+    let reserved = corp.ships.reduce((n, s) => n + s.minersAboard, 0)
+    let available = corp.minersOwned - corp.deployedMiners.length - reserved
+    while (available > 0) {
+      const ship = this.idleHauler(corp)
+      if (!ship) break
+      const need = this.rocksNeedingMiner(corp)
+      if (need.length === 0) break
+      const load = Math.min(MINER_SLOTS, available, need.length)
+      ship.deployQueue = need.slice(0, load)
+      ship.minersAboard = load
+      available -= load
+      ship.targetAsteroidId = ship.deployQueue[0]
+      ship.phase = 'to-asteroid'
+    }
+
+    // (3) any still-idle haulers recover drifting orphaned nets (run automatically)
     for (const orphan of corp.orphanNets) {
       if (corp.ships.some((s) => s.targetOrphanId === orphan.id)) continue
-      const ship = corp.ships.find((s) => s.phase === 'idle' && !s.targetAsteroidId && !s.targetOrphanId)
+      const ship = this.idleHauler(corp)
       if (!ship) break
       ship.targetOrphanId = orphan.id
       ship.phase = 'to-orphan'
     }
+  }
+
+  /** A deploy-run target became invalid (depleted / unclaimed / already has a miner):
+   * drop it and any other now-invalid heads, then go to the next, or finish the run. */
+  private advanceDeployRun(corp: SimCorp, ship: SimShip): void {
+    do {
+      ship.deployQueue.shift()
+    } while (ship.deployQueue.length > 0 && !this.canDeployAt(corp, ship.deployQueue[0]))
+    if (ship.deployQueue.length > 0) {
+      ship.targetAsteroidId = ship.deployQueue[0]
+      ship.phase = 'to-asteroid'
+    } else {
+      ship.minersAboard = 0 // undeployed miners return to inventory
+      ship.targetAsteroidId = null
+      ship.phase = ship.cargo > 0 ? 'to-base' : 'idle'
+    }
+  }
+
+  private canDeployAt(corp: SimCorp, asteroidId: string): boolean {
+    const a = this.asteroids.get(asteroidId)
+    return !!a && a.claimedBy === corp.id && a.currentQuantity > 0 && !this.minerAt(corp, asteroidId)
   }
 
   private minerAt(corp: SimCorp, asteroidId: string): SimMiner | undefined {
@@ -544,22 +604,27 @@ export class World {
 
       case 'to-asteroid': {
         const a = ship.targetAsteroidId ? this.asteroids.get(ship.targetAsteroidId) : undefined
-        const minerHere = ship.targetAsteroidId ? this.minerAt(corp, ship.targetAsteroidId) : undefined
-        // target invalid: no asteroid, or (carrying a miner to) a depleted rock with no miner yet
-        if (!a || a.claimedBy !== corp.id || (ship.carryingMiner && a.currentQuantity <= 0 && !minerHere)) {
-          ship.carryingMiner = false
+        if (ship.minersAboard > 0) {
+          // deploy run: skip to the next queued rock if this one can't take a miner
+          if (!ship.targetAsteroidId || !this.canDeployAt(corp, ship.targetAsteroidId)) {
+            this.advanceDeployRun(corp, ship)
+            return
+          }
+          if (this.moveToward(ship, a!.x, a!.y, dt)) {
+            ship.phase = 'deploying'
+            ship.timer = MINER_DEPLOY_SECONDS
+          }
+          return
+        }
+        // shuttle run: head to the rock to collect its miner's nets
+        if (!a || a.claimedBy !== corp.id) {
           ship.targetAsteroidId = null
           ship.phase = ship.cargo > 0 ? 'to-base' : 'idle'
           return
         }
         if (this.moveToward(ship, a.x, a.y, dt)) {
-          if (ship.carryingMiner) {
-            ship.phase = 'deploying'
-            ship.timer = MINER_DEPLOY_SECONDS
-          } else {
-            ship.phase = 'collecting'
-            ship.timer = NET_COLLECT_SECONDS
-          }
+          ship.phase = 'collecting'
+          ship.timer = NET_COLLECT_SECONDS
         }
         return
       }
@@ -584,10 +649,21 @@ export class World {
             condition: 1,
             battery: MINER_BATTERY_MAX,
           })
+          ship.minersAboard = Math.max(0, ship.minersAboard - 1)
         }
-        ship.carryingMiner = false
-        ship.phase = 'collecting'
-        ship.timer = NET_COLLECT_SECONDS
+        // drop this rock from the run; skip any now-invalid next rocks
+        do {
+          ship.deployQueue.shift()
+        } while (ship.deployQueue.length > 0 && !this.canDeployAt(corp, ship.deployQueue[0]))
+        if (ship.minersAboard > 0 && ship.deployQueue.length > 0) {
+          ship.targetAsteroidId = ship.deployQueue[0] // milk run: go deploy the next miner
+          ship.phase = 'to-asteroid'
+        } else {
+          ship.minersAboard = 0 // any leftover returns to inventory
+          ship.deployQueue = []
+          ship.phase = 'collecting' // shuttle the rock we just deployed at
+          ship.timer = NET_COLLECT_SECONDS
+        }
         return
       }
 
@@ -816,7 +892,8 @@ export class World {
       s.phase = 'idle'
       s.targetAsteroidId = null
       s.targetOrphanId = null
-      s.carryingMiner = false
+      s.minersAboard = 0
+      s.deployQueue = []
     }
     this.pushLog(`💀 ${corp.name} liquidated — ${corp.periodTonnage} t against a ${this.quota} t quota.`)
   }
@@ -890,7 +967,7 @@ export class World {
         cargoLevel: s.cargoLevel,
         cargoResource: s.cargoResource,
         targetAsteroidId: s.targetAsteroidId,
-        carryingMiner: s.carryingMiner,
+        carryingMiner: s.minersAboard > 0,
         fuel: Math.round(s.fuel),
         battery: Math.round(s.battery),
       })),

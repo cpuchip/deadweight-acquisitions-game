@@ -48,6 +48,7 @@ export const MINER_NET_BUFFER = 4 // nets a deployed miner holds before it's net
 export const NET_LEAKAGE = 0.05 // fraction lost when the hauler collects ore (Dave's NET_LEAKAGE_FRACTION)
 export const MINER_DEPLOY_SECONDS = 1.5 // dwell to deploy or recover a miner
 export const NET_COLLECT_SECONDS = 0.8 // dwell to collect nets at the asteroid
+export const MINER_SLOTS = 2 // miners a hauler can carry out per trip (Dave's 2-miner bay)
 
 export const ARRIVAL_RADIUS = 28 // world units, "close enough" to a point
 

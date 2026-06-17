@@ -335,6 +335,31 @@ assert(final.asteroids.some((a) => a.isCompany), 'company asteroids are flagged 
   assert(sawRepair, 'a servicing hauler repairs a worn miner (condition jumps back up)')
 }
 
+// ---- v6: multiple miners per hauler (the 2-miner bay milk run) ----
+{
+  const w = new World(1212)
+  w.addCorp('M', 'MilkRun', 0x55ccff)
+  w.start()
+  w.applyCommand('M', { kind: 'buyMiner' })
+  w.applyCommand('M', { kind: 'buyMiner' }) // two miners, still ONE hauler
+  const ms = w.snapshot()
+  const mbase = ms.corps[0]
+  const near = ms.asteroids
+    .map((a) => ({ id: a.id, d: Math.hypot(a.x - mbase.baseX, a.y - mbase.baseY) }))
+    .sort((x, y) => x.d - y.d)
+    .slice(0, 2)
+  w.applyCommand('M', { kind: 'designate', asteroidId: near[0].id })
+  w.applyCommand('M', { kind: 'designate', asteroidId: near[1].id })
+  let maxDeployed = 0
+  for (let i = 0; i < 90 * SIM_HZ; i++) {
+    w.tick(dt)
+    maxDeployed = Math.max(maxDeployed, w.snapshot().corps[0].miners.length)
+    if (maxDeployed >= 2) break
+  }
+  assert(w.snapshot().corps[0].ships.length === 1, 'milk-run test uses a single hauler')
+  assert(maxDeployed >= 2, 'one hauler deploys two miners in a single trip (2-miner bay milk run)')
+}
+
 if (failures > 0) {
   console.error(`\n${failures} assertion(s) failed`)
   process.exit(1)
