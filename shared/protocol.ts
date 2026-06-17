@@ -34,6 +34,8 @@ export interface ShipSnap {
   cargoCapacity: number
   cargoResource: ResourceType | null
   targetAsteroidId: string | null
+  /** a hauler can only mine if it carries a purchased AutoMiner */
+  hasMiner: boolean
 }
 
 export interface CorpSnap {
@@ -44,9 +46,14 @@ export interface CorpSnap {
   baseX: number
   baseY: number
   credits: number
-  /** cumulative tons sold across the whole match */
+  /** resources held in base storage, awaiting sale */
+  storage: Partial<Record<ResourceType, number>>
+  storageCapacity: number
+  /** total AutoMiners owned (mounted across the fleet) */
+  minerCount: number
+  /** cumulative tons DELIVERED to base across the whole match */
   tonnage: number
-  /** tons sold in the current quota period (the elimination metric) */
+  /** tons delivered in the current quota period (the elimination metric) */
   periodTonnage: number
   ships: ShipSnap[]
   alive: boolean
@@ -78,6 +85,8 @@ export type GameCommand =
   | { kind: 'designate'; asteroidId: string }
   | { kind: 'undesignate'; asteroidId: string }
   | { kind: 'buyShip' }
+  | { kind: 'buyMiner' }
+  | { kind: 'sell'; resource: ResourceType }
 
 export type ClientMessage =
   | { type: 'join'; name: string; room: string }

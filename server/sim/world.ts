@@ -1,36 +1,39 @@
 // The multiplayer simulation — server-authoritative, plain data, no Phaser.
 //
-// Reuses Dave's Phaser-free modules: generateWorld() for the shared field and
-// RESOURCE_SELL_PRICES for the market. The ship/mining loop is reimplemented as
-// plain data because the originals are Phaser entities and there is now one corp's
-// worth of them per player, racing in one field.
+// Faithful to Dave's single-player economy: a hauler can only mine if it carries a
+// purchased AutoMiner; cargo is hauled to base STORAGE (capped) and SOLD manually
+// at the market for credits; you reinvest in haulers (500) and miners (300).
+// Tonnage = tons DELIVERED to base (the quota / elimination metric). The shared
+// asteroid field, contested claims, and last-corp-standing layer are MP-only.
+//
+// Reuses Dave's Phaser-free modules: generateWorld() for the field and
+// RESOURCE_SELL_PRICES for the market.
 
 import { nanoid } from 'nanoid'
 import { generateWorld, type AsteroidData } from '../../src/world/worldGenerator'
 import { RESOURCE_SELL_PRICES, type ResourceType } from '../../src/world/worldConfig'
 import {
+  FIRST_PERIOD_SECONDS,
   QUOTA_PERIOD_SECONDS,
   QUOTA_BASE,
   QUOTA_GROWTH,
   STARTING_CREDITS,
   STARTING_SHIPS,
+  STARTING_MINERS,
   SHIP_COST,
+  MINER_COST,
   SHIP_CARGO_CAPACITY,
+  STORAGE_CAPACITY,
   MAX_SHIPS_PER_CORP,
   SHIP_SPEED,
   MINE_RATE,
   UNLOAD_SECONDS,
   ARRIVAL_RADIUS,
-  BASE_RING_RADIUS,
+  BASE_ORBIT_RADIUS,
   WORLD_RADIUS,
   MAX_CORPS_PER_ROOM,
 } from '../../shared/mpConfig'
-import type {
-  GameCommand,
-  WorldSnapshot,
-  ShipPhase,
-  MatchPhase,
-} from '../../shared/protocol'
+import type { GameCommand, WorldSnapshot, ShipPhase, MatchPhase } from '../../shared/protocol'
 
 interface SimShip {
   id: string
@@ -42,6 +45,8 @@ interface SimShip {
   cargoResource: ResourceType | null
   targetAsteroidId: string | null
   unloadTimer: number
+  /** a hauler can only mine if it carries a purchased AutoMiner */
+  hasMiner: boolean
 }
 
 interface SimCorp {
@@ -51,6 +56,7 @@ interface SimCorp {
   baseX: number
   baseY: number
   credits: number
+  storage: Partial<Record<ResourceType, number>>
   tonnage: number
   periodTonnage: number
   ships: SimShip[]
@@ -61,12 +67,6 @@ interface SimCorp {
 }
 
 type SimAsteroid = AsteroidData & { claimedBy: string | null }
-
-function dist(ax: number, ay: number, bx: number, by: number): number {
-  const dx = bx - ax
-  const dy = by - ay
-  return Math.sqrt(dx * dx + dy * dy)
-}
 
 export class World {
   readonly seed: number
@@ -80,7 +80,6 @@ export class World {
   private asteroids = new Map<string, SimAsteroid>()
   private corps = new Map<string, SimCorp>()
   private log: string[] = []
-  private nextColorIndex = 0
 
   constructor(seed: number) {
     this.seed = seed
@@ -93,9 +92,10 @@ export class World {
 
   addCorp(id: string, name: string, color: number): SimCorp {
     const index = this.corps.size
-    const angle = (index / MAX_CORPS_PER_ROOM) * Math.PI * 2
-    const baseX = Math.cos(angle) * BASE_RING_RADIUS
-    const baseY = Math.sin(angle) * BASE_RING_RADIUS
+    // bases sit in "GEO orbit" around the planet (SP base is south at y=650)
+    const angle = Math.PI / 2 + (index / MAX_CORPS_PER_ROOM) * Math.PI * 2
+    const baseX = Math.cos(angle) * BASE_ORBIT_RADIUS
+    const baseY = Math.sin(angle) * BASE_ORBIT_RADIUS
     const corp: SimCorp = {
       id,
       name,
@@ -103,6 +103,7 @@ export class World {
       baseX,
       baseY,
       credits: STARTING_CREDITS,
+      storage: {},
       tonnage: 0,
       periodTonnage: 0,
       ships: [],
@@ -110,7 +111,7 @@ export class World {
       alive: true,
       online: true,
     }
-    for (let i = 0; i < STARTING_SHIPS; i++) corp.ships.push(this.makeShip(corp))
+    for (let i = 0; i < STARTING_SHIPS; i++) corp.ships.push(this.makeShip(corp, i < STARTING_MINERS))
     this.corps.set(id, corp)
     this.pushLog(`${name} signed on.`)
     return corp
@@ -129,7 +130,7 @@ export class World {
     return this.corps.size
   }
 
-  private makeShip(corp: SimCorp): SimShip {
+  private makeShip(corp: SimCorp, hasMiner: boolean): SimShip {
     return {
       id: nanoid(8),
       x: corp.baseX,
@@ -140,6 +141,7 @@ export class World {
       cargoResource: null,
       targetAsteroidId: null,
       unloadTimer: 0,
+      hasMiner,
     }
   }
 
@@ -152,8 +154,8 @@ export class World {
     this.t = 0
     this.period = 1
     this.quota = QUOTA_BASE
-    this.periodEndsAt = QUOTA_PERIOD_SECONDS
-    this.pushLog(`Match started — ${this.corps.size} corp(s). First quota: ${QUOTA_BASE} t.`)
+    this.periodEndsAt = FIRST_PERIOD_SECONDS // generous setup window for period 1
+    this.pushLog(`Match started — ${this.corps.size} corp(s). Setup period: hit ${QUOTA_BASE} t.`)
   }
 
   private end(winner: SimCorp | null): void {
@@ -178,6 +180,12 @@ export class World {
       case 'buyShip':
         this.buyShip(corp)
         break
+      case 'buyMiner':
+        this.buyMiner(corp)
+        break
+      case 'sell':
+        this.sellResource(corp, cmd.resource)
+        break
     }
   }
 
@@ -199,8 +207,24 @@ export class World {
     if (corp.ships.length >= MAX_SHIPS_PER_CORP) return
     if (corp.credits < SHIP_COST) return
     corp.credits -= SHIP_COST
-    corp.ships.push(this.makeShip(corp))
+    corp.ships.push(this.makeShip(corp, false))
     this.pushLog(`${corp.name} commissioned a hauler.`)
+  }
+
+  private buyMiner(corp: SimCorp): void {
+    if (corp.credits < MINER_COST) return
+    const ship = corp.ships.find((s) => !s.hasMiner)
+    if (!ship) return // no free hauler slot — commission a hauler first
+    corp.credits -= MINER_COST
+    ship.hasMiner = true
+    this.pushLog(`${corp.name} fitted an AutoMiner.`)
+  }
+
+  private sellResource(corp: SimCorp, resource: ResourceType): void {
+    const qty = corp.storage[resource] ?? 0
+    if (qty <= 0) return
+    corp.storage[resource] = 0
+    corp.credits += qty * (RESOURCE_SELL_PRICES[resource] ?? 1)
   }
 
   // ---- simulation ----
@@ -213,7 +237,6 @@ export class World {
       if (!corp.alive) continue
       this.dispatch(corp)
       for (const ship of corp.ships) this.updateShip(corp, ship, dt)
-      // drop dead claims (depleted/lost rocks)
       corp.claims = corp.claims.filter((id) => {
         const a = this.asteroids.get(id)
         return a && a.currentQuantity > 0 && a.claimedBy === corp.id
@@ -223,7 +246,7 @@ export class World {
     if (this.t >= this.periodEndsAt) this.deadline()
   }
 
-  /** Assign idle ships to claimed-but-uncovered asteroids (the autodispatch). */
+  /** Assign idle MINER-EQUIPPED ships to claimed-but-uncovered asteroids. */
   private dispatch(corp: SimCorp): void {
     const covered = new Set<string>()
     for (const s of corp.ships) {
@@ -235,12 +258,19 @@ export class World {
       if (covered.has(claimId)) continue
       const a = this.asteroids.get(claimId)
       if (!a || a.currentQuantity <= 0 || a.claimedBy !== corp.id) continue
-      const ship = corp.ships.find((s) => s.phase === 'idle')
-      if (!ship) break // no free ships — buy more
+      // only a hauler with an AutoMiner can work the rock (the money gate)
+      const ship = corp.ships.find((s) => s.phase === 'idle' && s.hasMiner && s.cargo <= 0)
+      if (!ship) break
       ship.targetAsteroidId = claimId
       ship.phase = 'to-asteroid'
       covered.add(claimId)
     }
+  }
+
+  private totalStored(corp: SimCorp): number {
+    let s = 0
+    for (const v of Object.values(corp.storage)) s += v ?? 0
+    return s
   }
 
   private updateShip(corp: SimCorp, ship: SimShip, dt: number): void {
@@ -251,7 +281,6 @@ export class World {
       case 'to-asteroid': {
         const a = ship.targetAsteroidId ? this.asteroids.get(ship.targetAsteroidId) : undefined
         if (!a || a.currentQuantity <= 0 || a.claimedBy !== corp.id) {
-          // target lost — head home if loaded, else go idle at the field
           ship.targetAsteroidId = null
           ship.phase = ship.cargo > 0 ? 'to-base' : 'idle'
           return
@@ -267,9 +296,8 @@ export class World {
           ship.phase = ship.cargo > 0 ? 'to-base' : 'idle'
           return
         }
-        const room = ship.cargo === 0 ? SHIP_CARGO_CAPACITY : SHIP_CARGO_CAPACITY - ship.cargo
-        const want = MINE_RATE * dt
-        const got = Math.min(want, room, a.currentQuantity)
+        const room = SHIP_CARGO_CAPACITY - ship.cargo
+        const got = Math.min(MINE_RATE * dt, room, a.currentQuantity)
         if (got > 0) {
           a.currentQuantity -= got
           ship.cargo += got
@@ -277,7 +305,6 @@ export class World {
         }
         const full = ship.cargo >= SHIP_CARGO_CAPACITY - 0.001
         if (a.currentQuantity <= 0) {
-          // mined out — release the claim for everyone
           a.claimedBy = null
           corp.claims = corp.claims.filter((id) => id !== a.id)
           ship.phase = 'to-base'
@@ -289,12 +316,17 @@ export class World {
 
       case 'to-base': {
         if (this.moveToward(ship, corp.baseX, corp.baseY, dt)) {
-          // arrived — sell over a short dwell
           if (ship.unloadTimer <= 0) ship.unloadTimer = UNLOAD_SECONDS
           ship.unloadTimer -= dt
           if (ship.unloadTimer <= 0) {
-            this.sell(corp, ship)
-            ship.phase = 'idle'
+            this.deliver(corp, ship)
+            if (ship.cargo <= 0.5) {
+              ship.unloadTimer = 0
+              ship.phase = 'idle'
+            } else {
+              // storage full — wait at base and retry until the player sells
+              ship.unloadTimer = UNLOAD_SECONDS
+            }
           }
         }
         return
@@ -302,16 +334,26 @@ export class World {
     }
   }
 
-  private sell(corp: SimCorp, ship: SimShip): void {
-    if (ship.cargo > 0 && ship.cargoResource) {
-      const price = RESOURCE_SELL_PRICES[ship.cargoResource] ?? 1
-      corp.credits += ship.cargo * price
-      corp.tonnage += ship.cargo
-      corp.periodTonnage += ship.cargo
+  /** Move cargo into base storage (what fits). Counts toward tonnage. */
+  private deliver(corp: SimCorp, ship: SimShip): void {
+    if (ship.cargo <= 0 || !ship.cargoResource) {
+      ship.cargo = 0
+      ship.cargoResource = null
+      return
     }
-    ship.cargo = 0
-    ship.cargoResource = null
-    ship.unloadTimer = 0
+    const space = STORAGE_CAPACITY - this.totalStored(corp)
+    const fit = Math.min(ship.cargo, Math.max(0, space))
+    if (fit > 0) {
+      const res = ship.cargoResource
+      corp.storage[res] = (corp.storage[res] ?? 0) + fit
+      corp.tonnage += fit
+      corp.periodTonnage += fit
+      ship.cargo -= fit
+      if (ship.cargo <= 0.5) {
+        ship.cargo = 0
+        ship.cargoResource = null
+      }
+    }
   }
 
   /** Move a ship toward a point; returns true on arrival. Updates facing. */
@@ -343,13 +385,8 @@ export class World {
     const byTons = [...alive].sort((a, b) => b.periodTonnage - a.periodTonnage)
     const toCut = new Set<SimCorp>()
 
-    // floor: everyone below the rising quota is cut
     for (const c of alive) if (c.periodTonnage < this.quota) toCut.add(c)
-
-    // race: when 2+ remain, the single lowest is always cut
     if (alive.length >= 2) toCut.add(byTons[byTons.length - 1])
-
-    // never wipe the whole field at once — the leader survives a universal miss
     if (toCut.size === alive.length && alive.length >= 2) toCut.delete(byTons[0])
 
     for (const c of toCut) this.liquidate(c)
@@ -364,7 +401,6 @@ export class World {
       return
     }
 
-    // next period — quota rises, survivors reset
     this.period += 1
     this.quota = Math.round(this.quota * QUOTA_GROWTH)
     for (const c of aliveAfter) c.periodTonnage = 0
@@ -396,7 +432,7 @@ export class World {
   snapshot(): WorldSnapshot {
     const asteroids = []
     for (const a of this.asteroids.values()) {
-      if (a.currentQuantity <= 0) continue // depleted rocks vanish
+      if (a.currentQuantity <= 0) continue
       asteroids.push({
         id: a.id,
         x: a.x,
@@ -415,6 +451,9 @@ export class World {
       baseX: c.baseX,
       baseY: c.baseY,
       credits: Math.floor(c.credits),
+      storage: roundStorage(c.storage),
+      storageCapacity: STORAGE_CAPACITY,
+      minerCount: c.ships.filter((s) => s.hasMiner).length,
       tonnage: Math.round(c.tonnage),
       periodTonnage: Math.round(c.periodTonnage),
       alive: c.alive,
@@ -429,6 +468,7 @@ export class World {
         cargoCapacity: SHIP_CARGO_CAPACITY,
         cargoResource: s.cargoResource,
         targetAsteroidId: s.targetAsteroidId,
+        hasMiner: s.hasMiner,
       })),
     }))
     return {
@@ -445,4 +485,12 @@ export class World {
       log: [...this.log],
     }
   }
+}
+
+function roundStorage(s: Partial<Record<ResourceType, number>>): Partial<Record<ResourceType, number>> {
+  const out: Partial<Record<ResourceType, number>> = {}
+  for (const [k, v] of Object.entries(s) as [ResourceType, number][]) {
+    if (v > 0) out[k] = Math.round(v)
+  }
+  return out
 }

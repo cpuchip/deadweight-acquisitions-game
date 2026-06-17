@@ -61,16 +61,25 @@ async function main(): Promise<void> {
 
   // Alpha claims the asteroid nearest its base, to keep the round trip short.
   const me = alpha.snap!.corps.find((c) => c.id === alpha.corpId)!
+  assert(me.minerCount === 0 && me.ships.length === 1, 'Alpha starts with 1 hauler, 0 miners')
   let nearest: { id: string; d: number } | null = null
   for (const a of alpha.snap!.asteroids) {
     const d = Math.hypot(a.x - me.baseX, a.y - me.baseY)
     if (!nearest || d < nearest.d) nearest = { id: a.id, d }
   }
   assert(!!nearest, 'found an asteroid to claim')
-  send(alpha.ws, { type: 'cmd', cmd: { kind: 'designate', asteroidId: nearest!.id } })
-  console.log(`  Alpha claimed asteroid ${nearest!.id} (~${Math.round(nearest!.d)} units away)`)
 
-  // dispatch + travel should pull a ship out of idle quickly
+  // MONEY GATE: claim with no miner -> nothing should dispatch
+  send(alpha.ws, { type: 'cmd', cmd: { kind: 'designate', asteroidId: nearest!.id } })
+  await sleep(1500)
+  {
+    const a = alpha.snap?.corps.find((c) => c.id === alpha.corpId)
+    assert(!a?.ships.some((s) => s.phase !== 'idle'), 'no miner -> claim does NOT auto-dispatch (money gate holds)')
+  }
+
+  // buy a miner -> the existing claim should now be serviced
+  send(alpha.ws, { type: 'cmd', cmd: { kind: 'buyMiner' } })
+  console.log(`  Alpha bought a miner; claim is ${nearest!.id} (~${Math.round(nearest!.d)} units away)`)
   let dispatched = false
   for (let i = 0; i < 20; i++) {
     await sleep(500)
@@ -80,7 +89,7 @@ async function main(): Promise<void> {
       break
     }
   }
-  assert(dispatched, 'a hauler left idle to service the claim')
+  assert(dispatched, 'after buying a miner, a hauler dispatches to the claim')
 
   // the full loop should bank tonnage within a generous window
   let earned = false

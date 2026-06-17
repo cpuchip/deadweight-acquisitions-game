@@ -33,21 +33,32 @@ problem.
 - **Reimplemented as plain data (multi-corp):** the ship/mining state machine,
   because the originals extend Phaser classes and there is one corp's worth of them.
 
-## v1 scope (the deployed slice) vs. phase-2
+## Scope — faithful economy (v2, 2026-06-17) vs. deferred micro
 
-**In v1 (this build):** shared seeded asteroid field · N corps each with a base,
-credits, a fleet of mining-haulers · the mine→haul→sell→grow loop run automatically
-per claimed asteroid · **contested asteroid claims** (first corp to claim mines it;
-rare-metals pay 5× iron, so the rich rocks are the fight) · asteroid depletion ·
-buy-ship economy · **rising quota + elimination, last corp standing** · lobby with
-room codes + names (no accounts) · live scoreboard + quota timer · spectate after
-elimination.
+**Faithful to Dave's single-player economy** (rebuilt after first-play feedback):
+- Start with **1 hauler, 0 miners, 750 credits** (mirrors SP's single Hauler-01).
+- A hauler can only mine if it carries a **purchased AutoMiner (300cr)** — the money
+  gate. Clicking an asteroid with no miner-equipped hauler registers the claim but
+  dispatches nothing (no more free auto-mining).
+- Mined ore hauls to **base storage (cap 2000)**, **not auto-sold**. You **sell
+  manually** at the base menu's market for credits, then reinvest (haulers 500cr,
+  miners 300cr).
+- The **base** is a faithful station (Dave's look, per-corp tint, name label) in GEO
+  orbit around the planet; clicking it opens the **base menu** (credits/storage,
+  MARKET, SHIPYARD, EQUIPMENT) — the MP twin of Dave's `BasePanel`.
+- **Tonnage = tons DELIVERED to base** (production), so the quota rewards mining
+  while selling drives growth and frees storage.
 
-**Simplified out of v1 (documented, phase-2 candidates):** the hauler/miner
-separation (folded — a ship mines directly), fuel/RCS/battery, condition/repair,
-station services, attach-failure rolls, net leakage, beacons, orphaned-net
-recovery, Keplerian orbiting (asteroids static in MP). The original single-player
-game keeps all of these.
+**MP-only competitive layer:** shared seeded field · **contested asteroid claims**
+(rare-metals pay 5× iron) · **rising quota + elimination, last corp standing**
+(period 1 is a generous setup window) · lobby + room codes + deep links ·
+scoreboard · spectate after elimination.
+
+**Still deferred (the deeper SP micro):** the hauler/miner *deploy + net-shuttle*
+dance (a miner-equipped hauler mines directly here), beacons, attach-failure/
+condition/repair, fuel/RCS/battery, station dock/hangar services, per-ship cargo
+upgrades, Keplerian orbiting. Single-player keeps all of these untouched; they're
+the next faithfulness layer if wanted.
 
 ## Layout
 

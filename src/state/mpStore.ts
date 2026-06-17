@@ -20,3 +20,5 @@ export const mpLobbyPlayers = writable<LobbyPlayer[]>([])
 export const mpSnapshot = writable<WorldSnapshot | null>(null)
 /** asteroid the player has selected on the map (for the claim/release panel) */
 export const mpSelectedAsteroid = writable<string | null>(null)
+/** the base/station menu (market, shipyard, equipment) — opens on clicking your base */
+export const mpBasePanelOpen = writable<boolean>(false)

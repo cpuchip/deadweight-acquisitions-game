@@ -1,7 +1,6 @@
 <script lang="ts">
-  import { mpSnapshot, mpYouCorpId, mpConnection, mpSelectedAsteroid } from '../../state/mpStore'
+  import { mpSnapshot, mpYouCorpId, mpConnection, mpSelectedAsteroid, mpBasePanelOpen } from '../../state/mpStore'
   import { sendCommand } from '../../net/mpClient'
-  import { SHIP_COST, MAX_SHIPS_PER_CORP } from '../../../shared/mpConfig'
   import type { CorpSnap, AsteroidSnap } from '../../../shared/protocol'
 
   function hex(c: number): string {
@@ -18,6 +17,7 @@
   $: board = world ? [...world.corps].sort((a, b) => b.periodTonnage - a.periodTonnage) : []
   $: countdown = world ? world.periodEndsAt - world.t : 0
   $: shipCount = me ? me.ships.length : 0
+  $: stored = me ? Math.floor(Object.values(me.storage).reduce((s, n) => s + (n ?? 0), 0)) : 0
   $: selected = selectAsteroid(world?.asteroids, $mpSelectedAsteroid)
   $: winner = world && world.winnerCorpId ? world.corps.find((c) => c.id === world.winnerCorpId) ?? null : null
 
@@ -34,8 +34,8 @@
     return Math.min(100, (c.periodTonnage / world.quota) * 100)
   }
 
-  function buyShip(): void {
-    sendCommand({ kind: 'buyShip' })
+  function openBase(): void {
+    mpBasePanelOpen.set(true)
   }
   function claim(a: AsteroidSnap): void {
     if (a.claimedBy === $mpYouCorpId) sendCommand({ kind: 'undesignate', asteroidId: a.id })
@@ -87,10 +87,8 @@
   <!-- actions -->
   {#if me && me.alive}
     <div class="actions">
-      <button class="act" on:click={buyShip} disabled={me.credits < SHIP_COST || shipCount >= MAX_SHIPS_PER_CORP}>
-        BUY HAULER · {SHIP_COST}c {shipCount >= MAX_SHIPS_PER_CORP ? '(max)' : ''}
-      </button>
-      <div class="fleet">Fleet: {shipCount}/{MAX_SHIPS_PER_CORP} haulers</div>
+      <button class="act" on:click={openBase}>◉ BASE — buy miners · sell ore</button>
+      <div class="fleet">{shipCount} hauler{shipCount === 1 ? '' : 's'} · {me.minerCount} miner{me.minerCount === 1 ? '' : 's'} · ore {stored}/{me.storageCapacity}</div>
     </div>
   {/if}
 
@@ -106,6 +104,9 @@
         <button class="sel-btn" on:click={() => claim(selected)} disabled={!me || !me.alive}>CLAIM &amp; MINE</button>
       {:else}
         <div class="contested">contested — held by {corpName(selected.claimedBy)}</div>
+      {/if}
+      {#if me && me.minerCount === 0 && selected.claimedBy !== $mpYouCorpId}
+        <div class="need-miner">No AutoMiner yet — buy one at your base ◉ to mine.</div>
       {/if}
     </div>
   {/if}
@@ -333,6 +334,12 @@
     margin-top: 8px;
     font-size: 11px;
     color: #ff9966;
+    text-align: center;
+  }
+  .need-miner {
+    margin-top: 8px;
+    font-size: 10px;
+    color: #ffcc66;
     text-align: center;
   }
   .log {

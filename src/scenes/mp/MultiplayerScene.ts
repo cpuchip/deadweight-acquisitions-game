@@ -5,18 +5,23 @@ import {
   mpSnapshot,
   mpYouCorpId,
   mpSelectedAsteroid,
+  mpBasePanelOpen,
 } from '../../state/mpStore'
 import { sendCommand } from '../../net/mpClient'
-import type { WorldSnapshot, AsteroidSnap } from '../../../shared/protocol'
+import { PLANET_RADIUS } from '../../../shared/mpConfig'
+import type { WorldSnapshot, AsteroidSnap, CorpSnap } from '../../../shared/protocol'
 
 const SIZE_RADIUS: Record<string, number> = { small: 7, medium: 11, large: 17 }
 const CLICK_TOLERANCE = 6 // screen px movement under which a pointerup counts as a click
+const BASE_OUTER_R = 32 // matches Dave's base texture outer ring
+const BASE_INNER_R = 20
 
 export class MultiplayerScene extends Phaser.Scene {
   private gfx!: Phaser.GameObjects.Graphics
   private snap: WorldSnapshot | null = null
   private unsub: Array<() => void> = []
   private centered = false
+  private baseLabels = new Map<string, Phaser.GameObjects.Text>()
 
   // pan/zoom drag bookkeeping
   private dragging = false
@@ -65,6 +70,8 @@ export class MultiplayerScene extends Phaser.Scene {
   shutdown(): void {
     for (const u of this.unsub) u()
     this.unsub = []
+    for (const l of this.baseLabels.values()) l.destroy()
+    this.baseLabels.clear()
   }
 
   private myCorp() {
@@ -75,6 +82,15 @@ export class MultiplayerScene extends Phaser.Scene {
   private handleClick(p: Phaser.Input.Pointer): void {
     if (!this.snap) return
     const world = this.cameras.main.getWorldPoint(p.x, p.y)
+
+    // clicking YOUR base opens the station menu
+    const myBase = this.myCorp()
+    if (myBase && Math.hypot(world.x - myBase.baseX, world.y - myBase.baseY) <= BASE_OUTER_R + 14) {
+      mpBasePanelOpen.set(true)
+      mpSelectedAsteroid.set(null)
+      return
+    }
+
     const a = this.nearestAsteroid(world.x, world.y)
     if (!a) {
       mpSelectedAsteroid.set(null)
@@ -121,10 +137,12 @@ export class MultiplayerScene extends Phaser.Scene {
     const selected = get(mpSelectedAsteroid)
 
     // central planet
-    g.fillStyle(0x223344, 1)
-    g.fillCircle(0, 0, 60)
-    g.lineStyle(2, 0x3a5a6a, 1)
-    g.strokeCircle(0, 0, 60)
+    g.fillStyle(0x1c3247, 1)
+    g.fillCircle(0, 0, PLANET_RADIUS)
+    g.fillStyle(0x244058, 0.6)
+    g.fillCircle(-PLANET_RADIUS * 0.25, -PLANET_RADIUS * 0.2, PLANET_RADIUS * 0.55)
+    g.lineStyle(2, 0x3a6090, 1)
+    g.strokeCircle(0, 0, PLANET_RADIUS)
 
     // asteroids
     for (const a of this.snap.asteroids) {
@@ -141,14 +159,16 @@ export class MultiplayerScene extends Phaser.Scene {
       }
     }
 
-    // bases
+    // bases — faithful station look (inner disc + outer ring), tinted per corp
     const me = get(mpYouCorpId)
     for (const c of this.snap.corps) {
       const dim = c.alive ? 1 : 0.25
+      const mine = c.id === me
       g.fillStyle(c.color, dim)
-      g.fillCircle(c.baseX, c.baseY, 18)
-      g.lineStyle(c.id === me ? 3 : 2, c.id === me ? 0xffffff : 0x99bbcc, dim)
-      g.strokeCircle(c.baseX, c.baseY, 22)
+      g.fillCircle(c.baseX, c.baseY, BASE_INNER_R)
+      g.lineStyle(mine ? 3 : 2, mine ? 0xffffff : 0x88ccff, dim)
+      g.strokeCircle(c.baseX, c.baseY, BASE_OUTER_R)
+      this.updateBaseLabel(c, mine)
     }
 
     // ships
@@ -162,6 +182,22 @@ export class MultiplayerScene extends Phaser.Scene {
         }
       }
     }
+  }
+
+  private updateBaseLabel(c: CorpSnap, mine: boolean): void {
+    let label = this.baseLabels.get(c.id)
+    if (!label) {
+      label = this.add
+        .text(0, 0, c.name, { fontFamily: 'monospace', fontSize: '14px', color: '#ffffff' })
+        .setOrigin(0.5, 0.5)
+      this.baseLabels.set(c.id, label)
+    }
+    label.setText(mine ? `${c.name} (you)` : c.name)
+    label.setColor('#' + (c.color >>> 0).toString(16).padStart(6, '0'))
+    label.setPosition(c.baseX, c.baseY + BASE_OUTER_R + 14)
+    // keep a constant on-screen size regardless of camera zoom
+    label.setScale(1 / this.cameras.main.zoom)
+    label.setAlpha(c.alive ? 1 : 0.3)
   }
 
   private drawShip(x: number, y: number, angle: number, color: number): void {
