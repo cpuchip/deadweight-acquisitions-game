@@ -9,6 +9,7 @@ import {
   mpSelectedMiner,
   mpBasePanelOpen,
   mpQuickClaim,
+  mpCameraTarget,
 } from '../../state/mpStore'
 import { sendCommand } from '../../net/mpClient'
 import { PLANET_RADIUS } from '../../../shared/mpConfig'
@@ -44,6 +45,15 @@ export class MultiplayerScene extends Phaser.Scene {
     this.cameras.main.centerOn(0, 0)
 
     this.unsub.push(mpSnapshot.subscribe((s) => (this.snap = s)))
+
+    // clicking the minimap flies the main camera to that world point (faithful to SP)
+    this.unsub.push(
+      mpCameraTarget.subscribe((t) => {
+        if (!t) return
+        this.centered = true // user took control of the view
+        this.cameras.main.pan(t.x, t.y, 300, 'Power2')
+      }),
+    )
 
     // right-click drags the map without popping the browser context menu
     this.input.mouse?.disableContextMenu()

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte'
-  import { mpSnapshot, mpConnection } from '../../state/mpStore'
+  import { mpSnapshot, mpConnection, mpCameraTarget } from '../../state/mpStore'
   import { RESOURCE_COLORS } from '../../world/worldConfig'
   import { PLANET_RADIUS } from '../../../shared/mpConfig'
   import type { WorldSnapshot } from '../../../shared/protocol'
@@ -8,12 +8,20 @@
   const W = 178
   const H = 158
   const EXTENT = 3100 // world half-span the minimap covers
+  const SCALE = Math.min(W, H) / (2 * EXTENT)
 
   let canvas: HTMLCanvasElement
   let ctx: CanvasRenderingContext2D | null = null
 
   function hex(c: number): string {
     return '#' + (c >>> 0).toString(16).padStart(6, '0')
+  }
+
+  // click the minimap to fly the main camera to that world point (faithful to SP)
+  function navigate(e: MouseEvent): void {
+    const worldX = (e.offsetX - W / 2) / SCALE
+    const worldY = (e.offsetY - H / 2) / SCALE
+    mpCameraTarget.set({ x: worldX, y: worldY })
   }
 
   onMount(() => {
@@ -31,7 +39,7 @@
 
     const cx = W / 2
     const cy = H / 2
-    const scale = Math.min(W, H) / (2 * EXTENT)
+    const scale = SCALE
     const toX = (x: number) => Math.max(1, Math.min(W - 1, cx + x * scale))
     const toY = (y: number) => Math.max(1, Math.min(H - 1, cy + y * scale))
 
@@ -73,7 +81,7 @@
 </script>
 
 <div class="mm" style:display={show ? 'block' : 'none'}>
-  <canvas bind:this={canvas} width={W} height={H}></canvas>
+  <canvas bind:this={canvas} width={W} height={H} on:click={navigate} title="click to fly the view here"></canvas>
 </div>
 
 <style>
@@ -85,9 +93,10 @@
     border-radius: 4px;
     overflow: hidden;
     line-height: 0;
-    pointer-events: none;
+    pointer-events: auto;
   }
   canvas {
     display: block;
+    cursor: pointer;
   }
 </style>

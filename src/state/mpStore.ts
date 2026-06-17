@@ -28,3 +28,5 @@ export const mpSelectedMiner = writable<string | null>(null)
 export const mpBasePanelOpen = writable<boolean>(false)
 /** quick-claim: when on, left-click also designates (Dave's default is select-only) */
 export const mpQuickClaim = writable<boolean>(false)
+/** a world point the main camera should fly to (set by clicking the minimap) */
+export const mpCameraTarget = writable<{ x: number; y: number } | null>(null)
