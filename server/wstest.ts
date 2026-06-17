@@ -59,6 +59,11 @@ async function main(): Promise<void> {
   assert(alpha.snap?.phase === 'running', 'host start -> phase running (seen by client)')
   assert((alpha.snap?.corps.length ?? 0) === 2, 'snapshot shows both corps')
 
+  // capture an asteroid's position to confirm Keplerian orbiting over the wire later
+  const orbitProbe = alpha.snap!.asteroids[0]
+    ? { id: alpha.snap!.asteroids[0].id, x: alpha.snap!.asteroids[0].x, y: alpha.snap!.asteroids[0].y }
+    : null
+
   // Alpha claims the asteroid nearest its base, to keep the round trip short.
   const me = alpha.snap!.corps.find((c) => c.id === alpha.corpId)!
   assert(me.minerCount === 0 && me.ships.length === 1, 'Alpha starts with 1 hauler, 0 miners')
@@ -106,6 +111,18 @@ async function main(): Promise<void> {
   }
   assert(sawMiner, 'a miner was deployed at the asteroid')
   assert(earned, 'deep loop shuttled ore to base over the network')
+
+  // Keplerian orbiting: by now (many seconds in) the probed asteroid has drifted
+  if (orbitProbe) {
+    const oa = alpha.snap?.asteroids.find((a) => a.id === orbitProbe.id)
+    if (oa) {
+      const d = Math.hypot(oa.x - orbitProbe.x, oa.y - orbitProbe.y)
+      console.log(`  orbit drift of probe asteroid: ${d.toFixed(2)} units (from ${orbitProbe.x.toFixed(0)},${orbitProbe.y.toFixed(0)} to ${oa.x.toFixed(0)},${oa.y.toFixed(0)})`)
+      assert(d > 0.5, 'asteroids orbit over the wire (Keplerian drift)')
+    } else {
+      console.log('  (orbit-probe asteroid was mined out — orbit check skipped)')
+    }
+  }
 
   // v4: ship naming + cargo upgrade over the network
   {

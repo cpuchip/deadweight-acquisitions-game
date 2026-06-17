@@ -129,7 +129,27 @@ on push is fixed (GitHub App granted access to the repo).
   - Verified: smoke (net-starved beacon trips + log alert + recall removes miner/frees
     claim/keeps the owned miner) + typecheck + build + wstest green; browser e2e ran the
     full deploy→deliver loop (53t) with the new render code live and **0 console errors**.
-- **v5b-2 NEXT (the logistics depth):** **multiple miners per hauler** (a "milk run" —
-  carry up to N miners out, deploy across a cluster of claimed rocks, shuttle from the
-  cluster) + **orphaned-net recovery** (nets from a recalled/depleted miner become
-  collectible salvage rather than vanishing).
+- **v5b: clickable minimap (ease-of-life) COMPLETE 2026-06-17 (`e333810`).** Clicking the
+  MP minimap flies the main camera to that world point (300ms Power2 pan), matching SP.
+  mpCameraTarget store bridges the DOM minimap to the Phaser scene. Browser-confirmed.
+- **v5b-2a: orphaned-net recovery COMPLETE 2026-06-17 (`daeb562`).** Recalling a miner
+  with buffered nets leaves the nets adrift as salvage (OrphanNetSnap + 'to-orphan' ship
+  phase); a freed hauler auto-recovers them. Faithful to Dave's free-orbit nets. smoke
+  25/25 + wstest + prod.
+- **v7: company asteroid arrivals COMPLETE 2026-06-17 (`d210066`).** Company asteroids
+  arrive over time (interval scales BASE→MIN by remaining natural fraction; capped at
+  COMPANY_ASTEROID_MAX_COUNT), using Dave's generateCompanyAsteroid. Gold halo in-scene +
+  gold minimap dot; AsteroidSnap.isCompany. smoke 28/28 + wstest + prod.
+
+### Remaining to v7 (each its own tested commit; break down as needed)
+- **Keplerian orbiting** — asteroids drift on their orbits (ω = ORBITAL_K / r^1.5, already
+  on every asteroid); deployed miners track their moving rock. (next)
+- **Multiple miners per hauler** (milk-run) — a hauler carries up to N miners out, deploys
+  across a cluster, shuttles from it. Efficiency/economy lever.
+- **v6 fuel / battery / condition** — hauler thruster fuel + battery; miner battery +
+  condition degradation + station repair; refuel/recharge fees. (Dave: HAULER_FUEL_MAX,
+  MINER_BATTERY_MAX, conditionPenaltyFraction, 'station-repair'.)
+- **v6 station services** — docks (fast transfer) vs hangars (slow service), owned vs
+  public fees, pressurization.
+- **v7 room persistence** (snapshot → disk, reconnect-resume) + **lobby chat** +
+  **spectator/camera-framing polish**.

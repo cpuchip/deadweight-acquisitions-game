@@ -249,6 +249,24 @@ assert(final.asteroids.some((a) => a.isCompany), 'company asteroids are flagged 
   assert(w.snapshot().corps[0].alive, 'corp survived the orphan-recovery window (stayed in period 1)')
 }
 
+// ---- v7: Keplerian orbiting ----
+{
+  const w = new World(99)
+  w.addCorp('K', 'Kepler', 0x55ccff)
+  w.start()
+  const before = w.snapshot().asteroids[0]
+  const id = before.id
+  const bx = before.x
+  const by = before.y
+  for (let i = 0; i < 30 * SIM_HZ; i++) w.tick(dt)
+  const after = w.snapshot().asteroids.find((a) => a.id === id)!
+  const moved = Math.hypot(after.x - bx, after.y - by)
+  assert(moved > 1, 'asteroids orbit the planet over time (Keplerian drift)')
+  const rBefore = Math.hypot(bx, by)
+  const rAfter = Math.hypot(after.x, after.y)
+  assert(Math.abs(rBefore - rAfter) < 1, 'orbital radius is preserved — the drift is angular')
+}
+
 if (failures > 0) {
   console.error(`\n${failures} assertion(s) failed`)
   process.exit(1)

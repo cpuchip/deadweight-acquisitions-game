@@ -16,6 +16,7 @@ import {
   COMPANY_ARRIVAL_BASE_INTERVAL,
   COMPANY_ARRIVAL_MIN_INTERVAL,
   COMPANY_ASTEROID_MAX_COUNT,
+  ORBITAL_K,
   type ResourceType,
 } from '../../src/world/worldConfig'
 import {
@@ -351,6 +352,8 @@ export class World {
     if (this.phase !== 'running' || this.paused) return
     this.t += dt
 
+    this.orbitAsteroids(dt)
+
     for (const corp of this.corps.values()) {
       if (!corp.alive) continue
       if (corp.autoDesignate) this.autoDesignate(corp)
@@ -368,6 +371,19 @@ export class World {
     this.companyArrivals(dt)
 
     if (this.t >= this.periodEndsAt) this.deadline()
+  }
+
+  /** Keplerian orbiting: every asteroid drifts along its orbit around the planet,
+   * angular rate ω = ORBITAL_K / r^1.5 (inner rocks faster). Faithful to Dave's SP. */
+  private orbitAsteroids(dt: number): void {
+    const TWO_PI = Math.PI * 2
+    for (const a of this.asteroids.values()) {
+      if (a.orbitalRadius <= 0) continue
+      const omega = ORBITAL_K / Math.pow(a.orbitalRadius, 1.5)
+      a.orbitalAngle = (a.orbitalAngle + omega * dt) % TWO_PI
+      a.x = Math.cos(a.orbitalAngle) * a.orbitalRadius
+      a.y = Math.sin(a.orbitalAngle) * a.orbitalRadius
+    }
   }
 
   /** Company asteroids arrive over time — faster as the natural field is exhausted,
@@ -456,6 +472,11 @@ export class World {
   private updateMiner(corp: SimCorp, m: SimMiner, dt: number): void {
     const prev = m.state
     const a = this.asteroids.get(m.asteroidId)
+    // a deployed miner is attached to its rock — it rides the orbit with it
+    if (a) {
+      m.x = a.x
+      m.y = a.y
+    }
     if (!a || a.currentQuantity <= 0) {
       m.state = 'depleted'
     } else if (m.oreReady >= MINER_ORE_CAP) {
@@ -502,9 +523,13 @@ export class World {
       }
 
       case 'deploying': {
+        const a = ship.targetAsteroidId ? this.asteroids.get(ship.targetAsteroidId) : undefined
+        if (a) {
+          ship.x = a.x // dock at the rock so the hauler rides its orbit
+          ship.y = a.y
+        }
         ship.timer -= dt
         if (ship.timer > 0) return
-        const a = ship.targetAsteroidId ? this.asteroids.get(ship.targetAsteroidId) : undefined
         if (a && !this.minerAt(corp, a.id)) {
           corp.deployedMiners.push({
             id: nanoid(8),
@@ -523,6 +548,11 @@ export class World {
       }
 
       case 'collecting': {
+        const ast = ship.targetAsteroidId ? this.asteroids.get(ship.targetAsteroidId) : undefined
+        if (ast) {
+          ship.x = ast.x // stay docked at the rock as it drifts
+          ship.y = ast.y
+        }
         ship.timer -= dt
         if (ship.timer > 0) return
         const miner = ship.targetAsteroidId ? this.minerAt(corp, ship.targetAsteroidId) : undefined
