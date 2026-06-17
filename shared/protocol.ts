@@ -54,6 +54,8 @@ export interface AsteroidSnap {
   maxQuantity: number
   /** corpId that has claimed this rock, or null if free. Depleted rocks stay null. */
   claimedBy: string | null
+  /** true for company asteroids (the richer rocks that arrive over time) */
+  isCompany: boolean
 }
 
 export interface ShipSnap {

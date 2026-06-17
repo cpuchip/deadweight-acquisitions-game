@@ -223,6 +223,11 @@ export class MultiplayerScene extends Phaser.Scene {
     // asteroids
     for (const a of this.snap.asteroids) {
       const r = SIZE_RADIUS[a.sizeCategory] ?? 8
+      // company asteroids (the richer arrivals) wear a soft gold halo
+      if (a.isCompany) {
+        g.lineStyle(1.5, 0xffd766, 0.55)
+        g.strokeCircle(a.x, a.y, r + 4)
+      }
       g.fillStyle(RESOURCE_COLORS[a.resourceType] ?? 0x888888, 1)
       g.fillCircle(a.x, a.y, r)
       if (a.claimedBy) {

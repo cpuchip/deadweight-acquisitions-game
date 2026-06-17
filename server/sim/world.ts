@@ -10,8 +10,14 @@
 // Reuses Dave's Phaser-free modules: generateWorld() and RESOURCE_SELL_PRICES.
 
 import { nanoid } from 'nanoid'
-import { generateWorld, type AsteroidData } from '../../src/world/worldGenerator'
-import { RESOURCE_SELL_PRICES, type ResourceType } from '../../src/world/worldConfig'
+import { generateWorld, generateCompanyAsteroid, type AsteroidData } from '../../src/world/worldGenerator'
+import {
+  RESOURCE_SELL_PRICES,
+  COMPANY_ARRIVAL_BASE_INTERVAL,
+  COMPANY_ARRIVAL_MIN_INTERVAL,
+  COMPANY_ASTEROID_MAX_COUNT,
+  type ResourceType,
+} from '../../src/world/worldConfig'
 import {
   FIRST_PERIOD_SECONDS,
   QUOTA_PERIOD_SECONDS,
@@ -125,15 +131,21 @@ export class World {
   quota = 0
   periodEndsAt = 0
   winnerCorpId: string | null = null
+  /** total company asteroids that have arrived since the match began (a stat) */
+  companyArrivalsCount = 0
 
   private asteroids = new Map<string, SimAsteroid>()
   private corps = new Map<string, SimCorp>()
   private log: string[] = []
+  private naturalTotal = 0 // initial ore in the natural (non-company) field
+  private companyArrivalAccumulator = 0
+  private arrivalCounter = 0
 
   constructor(seed: number) {
     this.seed = seed
     for (const a of generateWorld(seed)) {
       this.asteroids.set(a.id, { ...a, claimedBy: null })
+      if (!a.isCompany) this.naturalTotal += a.currentQuantity
     }
   }
 
@@ -353,7 +365,34 @@ export class World {
       })
     }
 
+    this.companyArrivals(dt)
+
     if (this.t >= this.periodEndsAt) this.deadline()
+  }
+
+  /** Company asteroids arrive over time — faster as the natural field is exhausted,
+   * keeping the field replenished (faithful to Dave's company-arrival pacing). */
+  private companyArrivals(dt: number): void {
+    this.companyArrivalAccumulator += dt
+    let naturalRemaining = 0
+    let companyActive = 0
+    for (const a of this.asteroids.values()) {
+      if (a.isCompany) {
+        if (a.currentQuantity > 0) companyActive++
+      } else {
+        naturalRemaining += Math.max(0, a.currentQuantity)
+      }
+    }
+    const fraction = this.naturalTotal > 0 ? Math.min(1, naturalRemaining / this.naturalTotal) : 0
+    const interval =
+      COMPANY_ARRIVAL_MIN_INTERVAL + (COMPANY_ARRIVAL_BASE_INTERVAL - COMPANY_ARRIVAL_MIN_INTERVAL) * fraction
+    if (this.companyArrivalAccumulator < interval) return
+    this.companyArrivalAccumulator = 0
+    if (companyActive >= COMPANY_ASTEROID_MAX_COUNT) return
+    const a = generateCompanyAsteroid(this.seed * 100000 + ++this.arrivalCounter)
+    this.asteroids.set(a.id, { ...a, claimedBy: null })
+    this.companyArrivalsCount += 1
+    this.pushLog(`📦 A company asteroid arrived — fresh ${a.resourceType}.`)
   }
 
   private autoDesignate(corp: SimCorp): void {
@@ -698,6 +737,7 @@ export class World {
         currentQuantity: Math.round(a.currentQuantity),
         maxQuantity: a.maxQuantity,
         claimedBy: a.claimedBy,
+        isCompany: a.isCompany,
       })
     }
     const corps = [...this.corps.values()].map((c) => ({

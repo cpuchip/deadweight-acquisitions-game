@@ -49,10 +49,15 @@
     ctx.arc(cx, cy, Math.max(2, PLANET_RADIUS * scale), 0, Math.PI * 2)
     ctx.fill()
 
-    // asteroids
+    // asteroids (company arrivals stand out gold + a touch larger)
     for (const a of w.asteroids) {
-      ctx.fillStyle = hex(RESOURCE_COLORS[a.resourceType] ?? 0x888888)
-      ctx.fillRect(toX(a.x) - 0.5, toY(a.y) - 0.5, 1.5, 1.5)
+      if (a.isCompany) {
+        ctx.fillStyle = '#ffd766'
+        ctx.fillRect(toX(a.x) - 1, toY(a.y) - 1, 2.5, 2.5)
+      } else {
+        ctx.fillStyle = hex(RESOURCE_COLORS[a.resourceType] ?? 0x888888)
+        ctx.fillRect(toX(a.x) - 0.5, toY(a.y) - 0.5, 1.5, 1.5)
+      }
     }
 
     // bases (squares) + ships (dots)

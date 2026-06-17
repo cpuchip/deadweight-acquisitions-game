@@ -121,6 +121,9 @@ assert(
   final.winnerCorpId === null || final.winnerCorpId === AGGRESSIVE,
   'if a winner emerged, it was the aggressive corp',
 )
+console.log('  company arrivals during the match:', world.companyArrivalsCount)
+assert(world.companyArrivalsCount >= 1, 'company asteroids arrived as the field depleted (Dave-faithful replenishment)')
+assert(final.asteroids.some((a) => a.isCompany), 'company asteroids are flagged in the snapshot')
 
 // ---- v4: named ships, cargo upgrades, auto-designate ----
 {
