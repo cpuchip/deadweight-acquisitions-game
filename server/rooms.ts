@@ -61,9 +61,25 @@ export class Room {
         if (m) this.world.applyCommand(m.corpId, msg.cmd)
         break
       }
+      case 'chat': {
+        const m = this.members.get(ws)
+        if (m) this.chat(m, msg.text)
+        break
+      }
       case 'ping':
         send(ws, { type: 'pong' })
         break
+    }
+  }
+
+  private chat(m: Member, rawText: string): void {
+    const text = (rawText || '').replace(/\s+/g, ' ').trim().slice(0, 160)
+    if (!text) return
+    const me = this.lobbyPlayers().find((p) => p.corpId === m.corpId)
+    const out: ServerMessage = { type: 'chat', from: m.name, color: me?.color ?? 0xffffff, text }
+    const payload = JSON.stringify(out)
+    for (const mem of this.members.values()) {
+      if (mem.ws.readyState === WebSocket.OPEN) mem.ws.send(payload)
     }
   }
 

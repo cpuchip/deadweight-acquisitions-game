@@ -144,6 +144,7 @@ export type ClientMessage =
   | { type: 'pause' } // host only: toggle the match pause (freezes the sim + clock)
   | { type: 'quit' } // forfeit + leave; the room is GC'd when it empties
   | { type: 'cmd'; cmd: GameCommand }
+  | { type: 'chat'; text: string } // a line of room chat (lobby or match)
   | { type: 'ping' }
 
 // ----- server -> client -----
@@ -152,6 +153,7 @@ export type ServerMessage =
   | { type: 'welcome'; corpId: string; room: string; isHost: boolean; you: string }
   | { type: 'lobby'; room: string; players: LobbyPlayer[]; isHost: boolean }
   | { type: 'snapshot'; world: WorldSnapshot }
+  | { type: 'chat'; from: string; color: number; text: string }
   | { type: 'error'; message: string }
   | { type: 'pong' }
 

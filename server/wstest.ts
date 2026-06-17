@@ -21,12 +21,13 @@ interface Client {
   corpId: string | null
   isHost: boolean
   snap: WorldSnapshot | null
+  chat: { from: string; text: string }[]
 }
 
 function open(name: string): Promise<Client> {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(URL)
-    const c: Client = { ws, corpId: null, isHost: false, snap: null }
+    const c: Client = { ws, corpId: null, isHost: false, snap: null, chat: [] }
     const t = setTimeout(() => reject(new Error('open timeout')), 5000)
     ws.on('open', () => send(ws, { type: 'join', name, room: ROOM }))
     ws.on('message', (data) => {
@@ -38,6 +39,8 @@ function open(name: string): Promise<Client> {
         resolve(c)
       } else if (msg.type === 'snapshot') {
         c.snap = msg.world
+      } else if (msg.type === 'chat') {
+        c.chat.push({ from: msg.from, text: msg.text })
       }
     })
     ws.on('error', reject)
@@ -53,6 +56,12 @@ async function main(): Promise<void> {
   const beta = await open('Beta')
   assert(!!alpha.corpId && !!beta.corpId, 'both corps got a welcome')
   assert(alpha.isHost && !beta.isHost, 'first joiner is host, second is not')
+
+  // chat broadcasts to the whole room (lobby or match)
+  send(alpha.ws, { type: 'chat', text: 'hello room' })
+  await sleep(400)
+  assert(beta.chat.some((c) => c.from === 'Alpha' && c.text === 'hello room'), 'chat broadcasts to other corps in the room')
+  assert(alpha.chat.some((c) => c.text === 'hello room'), 'sender sees their own chat line')
 
   send(alpha.ws, { type: 'start' })
   await sleep(700)

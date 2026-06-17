@@ -30,3 +30,12 @@ export const mpBasePanelOpen = writable<boolean>(false)
 export const mpQuickClaim = writable<boolean>(false)
 /** a world point the main camera should fly to (set by clicking the minimap) */
 export const mpCameraTarget = writable<{ x: number; y: number } | null>(null)
+
+export interface ChatLine {
+  id: number
+  from: string
+  color: number
+  text: string
+}
+/** room chat (lobby + match), newest last; capped to the recent tail */
+export const mpChat = writable<ChatLine[]>([])

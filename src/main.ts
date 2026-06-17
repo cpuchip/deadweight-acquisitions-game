@@ -11,6 +11,7 @@ import Lobby from './ui/mp/Lobby.svelte'
 import MpHud from './ui/mp/MpHud.svelte'
 import MpBasePanel from './ui/mp/MpBasePanel.svelte'
 import MpMinimap from './ui/mp/MpMinimap.svelte'
+import MpChat from './ui/mp/MpChat.svelte'
 import { mpMode } from './state/mpStore'
 
 new Phaser.Game({
@@ -45,6 +46,7 @@ mount(Lobby, { target: mpTarget })
 mount(MpHud, { target: mpTarget })
 mount(MpBasePanel, { target: mpTarget })
 mount(MpMinimap, { target: mpTarget })
+mount(MpChat, { target: mpTarget })
 
 // Toggle which overlay is live by mode. The Phaser scene swap handles the canvas.
 mpMode.subscribe((mode) => {

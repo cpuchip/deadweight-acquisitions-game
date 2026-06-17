@@ -10,7 +10,11 @@ import {
   mpIsHost,
   mpLobbyPlayers,
   mpSnapshot,
+  mpChat,
+  mpYouName,
 } from '../state/mpStore'
+
+let chatSeq = 0
 
 let ws: WebSocket | null = null
 let heartbeat: ReturnType<typeof setInterval> | null = null
@@ -98,10 +102,16 @@ export function sendCommand(cmd: GameCommand): void {
   send({ type: 'cmd', cmd })
 }
 
+export function sendChat(text: string): void {
+  const t = text.trim()
+  if (t) send({ type: 'chat', text: t })
+}
+
 function handle(msg: ServerMessage): void {
   switch (msg.type) {
     case 'welcome':
       mpYouCorpId.set(msg.corpId)
+      mpYouName.set(msg.you)
       mpRoom.set(msg.room)
       mpIsHost.set(msg.isHost)
       mpConnection.set('connected')
@@ -112,6 +122,12 @@ function handle(msg: ServerMessage): void {
       break
     case 'snapshot':
       mpSnapshot.set(msg.world)
+      break
+    case 'chat':
+      mpChat.update((lines) => {
+        const next = [...lines, { id: ++chatSeq, from: msg.from, color: msg.color, text: msg.text }]
+        return next.length > 60 ? next.slice(next.length - 60) : next
+      })
       break
     case 'error':
       mpError.set(msg.message)
