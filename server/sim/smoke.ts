@@ -198,6 +198,54 @@ assert(
   assert(after.minerCount === ownedBefore, 'recall keeps the owned miner (returns it to inventory)')
 }
 
+// ---- v5b-2: orphaned-net recovery ----
+{
+  const w = new World(4242)
+  w.addCorp('O', 'Orphan', 0x55ccff)
+  w.start()
+  w.applyCommand('O', { kind: 'buyMiner' })
+  // a far rock: the miner accumulates nets while the single hauler is away, so we can
+  // recall it mid-buffer and watch the nets drift as salvage (all within period 1)
+  const s0 = w.snapshot()
+  const b = s0.corps[0]
+  let far: { id: string; d: number } | null = null
+  for (const a of s0.asteroids) {
+    if (a.sizeCategory !== 'large') continue
+    const d = Math.hypot(a.x - b.baseX, a.y - b.baseY)
+    if (!far || d > far.d) far = { id: a.id, d }
+  }
+  w.applyCommand('O', { kind: 'designate', asteroidId: far!.id })
+
+  // wait until the deployed miner has buffered >= 2 nets (so a recall leaves real ore)
+  let buffered = false
+  for (let i = 0; i < 80 * SIM_HZ; i++) {
+    w.tick(dt)
+    const m = w.snapshot().corps[0].miners[0]
+    if (m && m.netsReady >= 2) {
+      buffered = true
+      break
+    }
+  }
+  assert(buffered, 'a far miner buffers nets while its hauler is away')
+
+  // recall mid-buffer -> the nets are NOT lost, they become orphaned salvage
+  w.applyCommand('O', { kind: 'undesignate', asteroidId: far!.id })
+  assert(w.snapshot().corps[0].orphanNets.length >= 1, 'recalling a miner mid-buffer leaves orphaned nets (not lost)')
+
+  // a freed hauler auto-recovers the drifting nets (designate-for-collection)
+  let recovered = false
+  for (let i = 0; i < 70 * SIM_HZ; i++) {
+    w.tick(dt)
+    const c = w.snapshot().corps[0]
+    if (c.orphanNets.length === 0) {
+      recovered = true
+      break
+    }
+  }
+  assert(recovered, 'a hauler auto-recovers the orphaned nets')
+  assert(w.snapshot().corps[0].alive, 'corp survived the orphan-recovery window (stayed in period 1)')
+}
+
 if (failures > 0) {
   console.error(`\n${failures} assertion(s) failed`)
   process.exit(1)

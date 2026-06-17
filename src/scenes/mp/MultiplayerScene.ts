@@ -266,6 +266,20 @@ export class MultiplayerScene extends Phaser.Scene {
       }
     }
 
+    // orphaned nets drifting in the field (from recalled/lost miners) — salvage
+    for (const c of this.snap.corps) {
+      if (!c.alive || !c.orphanNets) continue
+      for (const o of c.orphanNets) {
+        g.lineStyle(1, 0xffcc44, 0.35 + 0.35 * pulse)
+        g.strokeCircle(o.x, o.y, 8 + pulse * 3)
+        g.fillStyle(0xffcc44, 0.85)
+        for (let i = 0; i < 4; i++) {
+          const ang = (i / 4) * Math.PI * 2 + this.time.now / 900
+          g.fillCircle(o.x + Math.cos(ang) * 5, o.y + Math.sin(ang) * 5, 1.8)
+        }
+      }
+    }
+
     // bases — faithful station look (inner disc + outer ring), tinted per corp
     const me = get(mpYouCorpId)
     for (const c of this.snap.corps) {

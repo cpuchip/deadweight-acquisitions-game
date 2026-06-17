@@ -10,7 +10,14 @@ export type MatchPhase = 'lobby' | 'running' | 'ended'
 
 /** A hauler's coarse, render-friendly state. Haulers no longer mine — they carry a
  * miner out to deploy, then shuttle the nets it ejects back to base. */
-export type ShipPhase = 'idle' | 'to-asteroid' | 'deploying' | 'collecting' | 'to-base' | 'unloading'
+export type ShipPhase =
+  | 'idle'
+  | 'to-asteroid'
+  | 'deploying'
+  | 'collecting'
+  | 'to-orphan'
+  | 'to-base'
+  | 'unloading'
 
 /** A deployed AutoMiner's state. */
 export type MinerState = 'mining' | 'net-starved' | 'depleted'
@@ -24,6 +31,17 @@ export interface MinerSnap {
   /** tethered nets waiting for the hauler (each ~NET_CAPACITY ore) */
   netsReady: number
   state: MinerState
+}
+
+/** Free-floating nets left behind when a miner is recalled/lost with ore still
+ * buffered — they drift as salvage until a hauler recovers them. */
+export interface OrphanNetSnap {
+  id: string
+  x: number
+  y: number
+  resourceType: ResourceType
+  /** ore still aboard the drifting nets */
+  amount: number
 }
 
 export interface AsteroidSnap {
@@ -73,6 +91,8 @@ export interface CorpSnap {
   minerCount: number
   /** miners currently deployed at asteroids */
   miners: MinerSnap[]
+  /** drifting nets left by recalled/lost miners, awaiting recovery */
+  orphanNets: OrphanNetSnap[]
   /** auto-claim the best unclaimed asteroid when a miner + hauler are free */
   autoDesignate: boolean
   /** cumulative tons DELIVERED to base across the whole match */

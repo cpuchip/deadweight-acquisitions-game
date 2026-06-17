@@ -29,6 +29,7 @@
     'to-asteroid': 'en route',
     deploying: 'deploying miner',
     collecting: 'collecting nets',
+    'to-orphan': 'recovering nets',
     'to-base': 'hauling to base',
     unloading: 'unloading',
   }

@@ -62,9 +62,19 @@ interface SimShip {
   cargoResource: ResourceType | null
   /** the asteroid this hauler services */
   targetAsteroidId: string | null
+  /** an orphaned net cluster this hauler is recovering */
+  targetOrphanId: string | null
   /** carrying a miner out to deploy */
   carryingMiner: boolean
   timer: number
+}
+
+interface SimOrphanNet {
+  id: string
+  x: number
+  y: number
+  resourceType: ResourceType
+  amount: number
 }
 
 interface SimMiner {
@@ -92,6 +102,7 @@ interface SimCorp {
   /** total AutoMiners owned (deployed + idle inventory) */
   minersOwned: number
   deployedMiners: SimMiner[]
+  orphanNets: SimOrphanNet[]
   claims: string[]
   shipCounter: number
   autoDesignate: boolean
@@ -146,6 +157,7 @@ export class World {
       ships: [],
       minersOwned: STARTING_MINERS,
       deployedMiners: [],
+      orphanNets: [],
       claims: [],
       shipCounter: 0,
       autoDesignate: false,
@@ -184,6 +196,7 @@ export class World {
       cargoLevel: 0,
       cargoResource: null,
       targetAsteroidId: null,
+      targetOrphanId: null,
       carryingMiner: false,
       timer: 0,
     }
@@ -262,7 +275,11 @@ export class World {
     corp.claims = corp.claims.filter((id) => id !== asteroidId)
     const a = this.asteroids.get(asteroidId)
     if (a && a.claimedBy === corp.id) a.claimedBy = null
-    // recall a deployed miner + free its hauler
+    // recall a deployed miner + free its hauler; any nets it had buffered are NOT
+    // lost — they drift as orphaned salvage for a hauler to recover later
+    for (const m of corp.deployedMiners) {
+      if (m.asteroidId === asteroidId && m.oreReady > 0.5) this.spawnOrphan(corp, m)
+    }
     corp.deployedMiners = corp.deployedMiners.filter((m) => m.asteroidId !== asteroidId)
     for (const s of corp.ships) {
       if (s.targetAsteroidId === asteroidId) {
@@ -271,6 +288,17 @@ export class World {
         s.phase = s.cargo > 0 ? 'to-base' : 'idle'
       }
     }
+  }
+
+  private spawnOrphan(corp: SimCorp, m: SimMiner): void {
+    corp.orphanNets.push({
+      id: nanoid(8),
+      x: m.x,
+      y: m.y,
+      resourceType: m.resourceType,
+      amount: m.oreReady,
+    })
+    this.pushLog(`${corp.name} recalled a miner — its nets are adrift for recovery.`)
   }
 
   private buyShip(corp: SimCorp): void {
@@ -369,6 +397,16 @@ export class World {
         ship.phase = 'to-asteroid'
         available -= 1
       }
+    }
+
+    // any still-idle haulers recover drifting orphaned nets (designate-for-collection,
+    // run automatically — the salvage shouldn't sit forever)
+    for (const orphan of corp.orphanNets) {
+      if (corp.ships.some((s) => s.targetOrphanId === orphan.id)) continue
+      const ship = corp.ships.find((s) => s.phase === 'idle' && !s.targetAsteroidId && !s.targetOrphanId)
+      if (!ship) break
+      ship.targetOrphanId = orphan.id
+      ship.phase = 'to-orphan'
     }
   }
 
@@ -489,6 +527,32 @@ export class World {
         return
       }
 
+      case 'to-orphan': {
+        const orphan = ship.targetOrphanId
+          ? corp.orphanNets.find((o) => o.id === ship.targetOrphanId)
+          : undefined
+        if (!orphan) {
+          ship.targetOrphanId = null
+          ship.phase = ship.cargo > 0 ? 'to-base' : 'idle'
+          return
+        }
+        if (this.moveToward(ship, orphan.x, orphan.y, dt)) {
+          const cap = shipCapacity(ship)
+          const take = Math.min(orphan.amount, cap - ship.cargo)
+          if (take > 0) {
+            orphan.amount -= take
+            ship.cargo += take * (1 - NET_LEAKAGE)
+            ship.cargoResource = orphan.resourceType
+          }
+          if (orphan.amount <= 0.5) {
+            corp.orphanNets = corp.orphanNets.filter((o) => o.id !== orphan.id)
+          }
+          ship.targetOrphanId = null
+          ship.phase = ship.cargo > 0 ? 'to-base' : 'idle'
+        }
+        return
+      }
+
       case 'to-base': {
         if (this.moveToward(ship, corp.baseX, corp.baseY, dt)) {
           ship.phase = 'unloading'
@@ -604,9 +668,11 @@ export class World {
     }
     corp.claims = []
     corp.deployedMiners = []
+    corp.orphanNets = []
     for (const s of corp.ships) {
       s.phase = 'idle'
       s.targetAsteroidId = null
+      s.targetOrphanId = null
       s.carryingMiner = false
     }
     this.pushLog(`💀 ${corp.name} liquidated — ${corp.periodTonnage} t against a ${this.quota} t quota.`)
@@ -652,6 +718,13 @@ export class World {
         resourceType: m.resourceType,
         netsReady: Math.floor(m.oreReady / NET_CAPACITY),
         state: m.state,
+      })),
+      orphanNets: c.orphanNets.map((o) => ({
+        id: o.id,
+        x: o.x,
+        y: o.y,
+        resourceType: o.resourceType,
+        amount: Math.round(o.amount),
       })),
       autoDesignate: c.autoDesignate,
       tonnage: Math.round(c.tonnage),
