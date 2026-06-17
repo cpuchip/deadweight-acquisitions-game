@@ -69,18 +69,34 @@ Dockerfile        # single-stage: npm ci -> vite build -> tsx server
 docker-compose.yml
 ```
 
-## Build progress
+## Build progress — v1 SHIPPED 2026-06-17
 
-- [ ] shared/protocol.ts + shared/mpConfig.ts
-- [ ] server/sim/world.ts  (the heart)
-- [ ] server/rooms.ts + server/index.ts
-- [ ] sim smoke test (node, headless)
-- [ ] client: mpStore + Lobby + MultiplayerScene + MpHud + menu wiring
-- [ ] package.json deps/scripts (ws, tsx, @types/ws)
-- [ ] Dockerfile + docker-compose.yml
-- [ ] local two-tab playtest
-- [ ] Dokploy deploy → deadweight.cpuchip.net
-- [ ] push fork
+- [x] shared/protocol.ts + shared/mpConfig.ts
+- [x] server/sim/world.ts  (the heart)
+- [x] server/rooms.ts + server/index.ts
+- [x] sim smoke test (server/sim/smoke.ts) — 5/5 green
+- [x] client: mpStore + Lobby + MultiplayerScene + MpHud + menu wiring
+- [x] package.json deps/scripts (ws, tsx, @types/ws, nanoid)
+- [x] Dockerfile + docker-compose.yml
+- [x] networked integration test (server/wstest.ts) — green local + container + prod
+- [x] in-browser verify (lobby, claim, render) via playwright-cli
+- [x] Dokploy deploy → **https://deadweight.cpuchip.net** (live)
+- [x] push fork (cpuchip/deadweight-acquisitions-game @ master)
+
+**Deploy:** NOCIX Dokploy (server.ibeco.me), project `deadweight`
+(`ilaeCtLXDQrQsP9mlK9rX`), compose `l4tkfFkX5GvAvNSlmqR3H`, auto-deploy on push to
+master. `*.cpuchip.net` is wildcard DNS → the VPS, so the subdomain needed no DNS step.
+
+## Known follow-ups / tuning
+
+- **Balance:** first quota (120 t / 90 s) can be tight if you claim a distant rock;
+  travel is ~6 s each way. Tune `QUOTA_*` / `MINE_RATE` / `BASE_RING_RADIUS` in
+  `shared/mpConfig.ts`. It's a knob, not a bug.
+- **Phase-2 (ratified shape, not built):** the folded hauler/miner separation,
+  fuel/condition/station depth, Keplerian orbiting, reconnect-hardening, a real
+  lobby chat, and the deeper economy. See the scope section above.
+- Snapshots send the full (non-depleted) asteroid set each tick — fine for a few
+  friends; delta-encode if a room ever gets large.
 
 ## Run
 
