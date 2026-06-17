@@ -8,8 +8,23 @@ export type { ResourceType, SizeCategory }
 
 export type MatchPhase = 'lobby' | 'running' | 'ended'
 
-/** A ship's coarse, render-friendly state. */
-export type ShipPhase = 'idle' | 'to-asteroid' | 'mining' | 'to-base'
+/** A hauler's coarse, render-friendly state. Haulers no longer mine — they carry a
+ * miner out to deploy, then shuttle the nets it ejects back to base. */
+export type ShipPhase = 'idle' | 'to-asteroid' | 'deploying' | 'collecting' | 'to-base' | 'unloading'
+
+/** A deployed AutoMiner's state. */
+export type MinerState = 'mining' | 'net-starved' | 'depleted'
+
+export interface MinerSnap {
+  id: string
+  x: number
+  y: number
+  asteroidId: string
+  resourceType: ResourceType
+  /** tethered nets waiting for the hauler (each ~NET_CAPACITY ore) */
+  netsReady: number
+  state: MinerState
+}
 
 export interface AsteroidSnap {
   id: string
@@ -37,9 +52,10 @@ export interface ShipSnap {
   /** 0..MAX_CARGO_LEVEL — drives cargoCapacity via the tier table */
   cargoLevel: number
   cargoResource: ResourceType | null
+  /** the asteroid this hauler is servicing (deploying to / shuttling for) */
   targetAsteroidId: string | null
-  /** a hauler can only mine if it carries a purchased AutoMiner */
-  hasMiner: boolean
+  /** true while carrying a miner out to deploy it */
+  carryingMiner: boolean
 }
 
 export interface CorpSnap {
@@ -53,9 +69,11 @@ export interface CorpSnap {
   /** resources held in base storage, awaiting sale */
   storage: Partial<Record<ResourceType, number>>
   storageCapacity: number
-  /** total AutoMiners owned (mounted across the fleet) */
+  /** total AutoMiners owned (deployed + idle in inventory) */
   minerCount: number
-  /** auto-claim the best unclaimed asteroid when a miner-hauler is free */
+  /** miners currently deployed at asteroids */
+  miners: MinerSnap[]
+  /** auto-claim the best unclaimed asteroid when a miner + hauler are free */
   autoDesignate: boolean
   /** cumulative tons DELIVERED to base across the whole match */
   tonnage: number

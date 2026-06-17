@@ -198,6 +198,24 @@ export class MultiplayerScene extends Phaser.Scene {
       }
     }
 
+    // deployed miners (at asteroids) + their tethered nets
+    for (const c of this.snap.corps) {
+      if (!c.alive) continue
+      for (const m of c.miners) {
+        g.fillStyle(c.color, 1)
+        g.fillRect(m.x - 4, m.y - 4, 8, 8)
+        g.lineStyle(1.5, m.state === 'net-starved' ? 0xffaa44 : m.state === 'depleted' ? 0x888888 : 0xffffff, 0.9)
+        g.strokeRect(m.x - 5, m.y - 5, 10, 10)
+        // tethered nets ringing the miner
+        g.fillStyle(0xffcc44, 0.95)
+        const n = Math.min(m.netsReady, 4)
+        for (let i = 0; i < n; i++) {
+          const ang = (i / 4) * Math.PI * 2 - Math.PI / 2
+          g.fillCircle(m.x + Math.cos(ang) * 11, m.y + Math.sin(ang) * 11, 2.2)
+        }
+      }
+    }
+
     // bases — faithful station look (inner disc + outer ring), tinted per corp
     const me = get(mpYouCorpId)
     for (const c of this.snap.corps) {
@@ -215,9 +233,12 @@ export class MultiplayerScene extends Phaser.Scene {
       if (!c.alive) continue
       for (const s of c.ships) {
         this.drawShip(s.x, s.y, s.angle, c.color)
-        if (s.cargo > 0) {
-          g.fillStyle(0xffffff, 0.9)
-          g.fillCircle(s.x, s.y, 2.2)
+        if (s.carryingMiner) {
+          g.fillStyle(0xffffff, 0.95)
+          g.fillRect(s.x - 2, s.y - 2, 4, 4) // the miner it's carrying out
+        } else if (s.cargo > 0) {
+          g.fillStyle(0xffcc44, 0.95)
+          g.fillCircle(s.x, s.y, 2.2) // ore nets aboard
         }
       }
     }

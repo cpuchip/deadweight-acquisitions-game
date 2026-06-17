@@ -1,13 +1,13 @@
 // The multiplayer simulation — server-authoritative, plain data, no Phaser.
 //
-// Faithful to Dave's single-player economy: a hauler can only mine if it carries a
-// purchased AutoMiner; cargo is hauled to base STORAGE (capped) and SOLD manually
-// at the market for credits; you reinvest in haulers (500) and miners (300).
-// Tonnage = tons DELIVERED to base (the quota / elimination metric). The shared
-// asteroid field, contested claims, and last-corp-standing layer are MP-only.
+// v5 deep mining loop (faithful to Dave's single-player): a hauler carries a
+// purchased AutoMiner out to a claimed asteroid and DEPLOYS it; the deployed miner
+// mines the rock and ejects nets (buffered, with net-starved backpressure); the
+// hauler SHUTTLES those nets back to base storage. Ore is sold manually at the base
+// menu. Tonnage = ore DELIVERED to base (the quota / elimination metric). The shared
+// field, contested claims, and last-corp-standing layer are MP-only.
 //
-// Reuses Dave's Phaser-free modules: generateWorld() for the field and
-// RESOURCE_SELL_PRICES for the market.
+// Reuses Dave's Phaser-free modules: generateWorld() and RESOURCE_SELL_PRICES.
 
 import { nanoid } from 'nanoid'
 import { generateWorld, type AsteroidData } from '../../src/world/worldGenerator'
@@ -34,8 +34,21 @@ import {
   BASE_ORBIT_RADIUS,
   WORLD_RADIUS,
   MAX_CORPS_PER_ROOM,
+  NET_CAPACITY,
+  MINER_NET_BUFFER,
+  NET_LEAKAGE,
+  MINER_DEPLOY_SECONDS,
+  NET_COLLECT_SECONDS,
 } from '../../shared/mpConfig'
-import type { GameCommand, WorldSnapshot, ShipPhase, MatchPhase } from '../../shared/protocol'
+import type {
+  GameCommand,
+  WorldSnapshot,
+  ShipPhase,
+  MinerState,
+  MatchPhase,
+} from '../../shared/protocol'
+
+const MINER_ORE_CAP = MINER_NET_BUFFER * NET_CAPACITY // ore a miner holds before net-starved
 
 interface SimShip {
   id: string
@@ -47,14 +60,22 @@ interface SimShip {
   cargo: number
   cargoLevel: number
   cargoResource: ResourceType | null
+  /** the asteroid this hauler services */
   targetAsteroidId: string | null
-  unloadTimer: number
-  /** a hauler can only mine if it carries a purchased AutoMiner */
-  hasMiner: boolean
+  /** carrying a miner out to deploy */
+  carryingMiner: boolean
+  timer: number
 }
 
-function shipCapacity(s: SimShip): number {
-  return CARGO_CAPACITY_TIERS[s.cargoLevel] ?? CARGO_CAPACITY_TIERS[0]
+interface SimMiner {
+  id: string
+  asteroidId: string
+  x: number
+  y: number
+  resourceType: ResourceType
+  /** ore mined + ejected as nets, awaiting collection (0..MINER_ORE_CAP) */
+  oreReady: number
+  state: MinerState
 }
 
 interface SimCorp {
@@ -68,17 +89,21 @@ interface SimCorp {
   tonnage: number
   periodTonnage: number
   ships: SimShip[]
-  /** asteroidIds this corp has claimed, in claim order (drives dispatch) */
+  /** total AutoMiners owned (deployed + idle inventory) */
+  minersOwned: number
+  deployedMiners: SimMiner[]
   claims: string[]
-  /** running counter for naming commissioned haulers */
   shipCounter: number
-  /** auto-claim the best unclaimed asteroid when a miner-hauler is free */
   autoDesignate: boolean
   alive: boolean
   online: boolean
 }
 
 type SimAsteroid = AsteroidData & { claimedBy: string | null }
+
+function shipCapacity(s: SimShip): number {
+  return CARGO_CAPACITY_TIERS[s.cargoLevel] ?? CARGO_CAPACITY_TIERS[0]
+}
 
 export class World {
   readonly seed: number
@@ -105,7 +130,6 @@ export class World {
 
   addCorp(id: string, name: string, color: number): SimCorp {
     const index = this.corps.size
-    // bases sit in "GEO orbit" around the planet (SP base is south at y=650)
     const angle = Math.PI / 2 + (index / MAX_CORPS_PER_ROOM) * Math.PI * 2
     const baseX = Math.cos(angle) * BASE_ORBIT_RADIUS
     const baseY = Math.sin(angle) * BASE_ORBIT_RADIUS
@@ -120,13 +144,15 @@ export class World {
       tonnage: 0,
       periodTonnage: 0,
       ships: [],
+      minersOwned: STARTING_MINERS,
+      deployedMiners: [],
       claims: [],
       shipCounter: 0,
       autoDesignate: false,
       alive: true,
       online: true,
     }
-    for (let i = 0; i < STARTING_SHIPS; i++) corp.ships.push(this.makeShip(corp, i < STARTING_MINERS))
+    for (let i = 0; i < STARTING_SHIPS; i++) corp.ships.push(this.makeShip(corp))
     this.corps.set(id, corp)
     this.pushLog(`${name} signed on.`)
     return corp
@@ -145,7 +171,7 @@ export class World {
     return this.corps.size
   }
 
-  private makeShip(corp: SimCorp, hasMiner: boolean): SimShip {
+  private makeShip(corp: SimCorp): SimShip {
     corp.shipCounter += 1
     return {
       id: nanoid(8),
@@ -158,8 +184,8 @@ export class World {
       cargoLevel: 0,
       cargoResource: null,
       targetAsteroidId: null,
-      unloadTimer: 0,
-      hasMiner,
+      carryingMiner: false,
+      timer: 0,
     }
   }
 
@@ -172,8 +198,19 @@ export class World {
     this.t = 0
     this.period = 1
     this.quota = QUOTA_BASE
-    this.periodEndsAt = FIRST_PERIOD_SECONDS // generous setup window for period 1
+    this.periodEndsAt = FIRST_PERIOD_SECONDS
     this.pushLog(`Match started — ${this.corps.size} corp(s). Setup period: hit ${QUOTA_BASE} t.`)
+  }
+
+  setPaused(v: boolean): void {
+    if (this.phase === 'running') this.paused = v
+  }
+
+  forfeit(corpId: string): void {
+    const c = this.corps.get(corpId)
+    if (!c || !c.alive) return
+    this.liquidate(c)
+    this.pushLog(`${c.name} left the match.`)
   }
 
   private end(winner: SimCorp | null): void {
@@ -213,6 +250,51 @@ export class World {
     }
   }
 
+  private designate(corp: SimCorp, asteroidId: string): void {
+    const a = this.asteroids.get(asteroidId)
+    if (!a || a.currentQuantity <= 0) return
+    if (a.claimedBy && a.claimedBy !== corp.id) return
+    a.claimedBy = corp.id
+    if (!corp.claims.includes(asteroidId)) corp.claims.push(asteroidId)
+  }
+
+  private undesignate(corp: SimCorp, asteroidId: string): void {
+    corp.claims = corp.claims.filter((id) => id !== asteroidId)
+    const a = this.asteroids.get(asteroidId)
+    if (a && a.claimedBy === corp.id) a.claimedBy = null
+    // recall a deployed miner + free its hauler
+    corp.deployedMiners = corp.deployedMiners.filter((m) => m.asteroidId !== asteroidId)
+    for (const s of corp.ships) {
+      if (s.targetAsteroidId === asteroidId) {
+        s.targetAsteroidId = null
+        s.carryingMiner = false
+        s.phase = s.cargo > 0 ? 'to-base' : 'idle'
+      }
+    }
+  }
+
+  private buyShip(corp: SimCorp): void {
+    if (corp.ships.length >= MAX_SHIPS_PER_CORP) return
+    if (corp.credits < SHIP_COST) return
+    corp.credits -= SHIP_COST
+    corp.ships.push(this.makeShip(corp))
+    this.pushLog(`${corp.name} commissioned a hauler.`)
+  }
+
+  private buyMiner(corp: SimCorp): void {
+    if (corp.credits < MINER_COST) return
+    corp.credits -= MINER_COST
+    corp.minersOwned += 1
+    this.pushLog(`${corp.name} bought an AutoMiner.`)
+  }
+
+  private sellResource(corp: SimCorp, resource: ResourceType): void {
+    const qty = corp.storage[resource] ?? 0
+    if (qty <= 0) return
+    corp.storage[resource] = 0
+    corp.credits += qty * (RESOURCE_SELL_PRICES[resource] ?? 1)
+  }
+
   private upgradeShip(corp: SimCorp, shipId: string): void {
     const ship = corp.ships.find((s) => s.id === shipId)
     if (!ship || ship.cargoLevel >= MAX_CARGO_LEVEL) return
@@ -223,57 +305,7 @@ export class World {
     this.pushLog(`${corp.name} upgraded ${ship.name}'s cargo hold to ${shipCapacity(ship)} t.`)
   }
 
-  private designate(corp: SimCorp, asteroidId: string): void {
-    const a = this.asteroids.get(asteroidId)
-    if (!a || a.currentQuantity <= 0) return
-    if (a.claimedBy && a.claimedBy !== corp.id) return // contested — someone owns it
-    a.claimedBy = corp.id
-    if (!corp.claims.includes(asteroidId)) corp.claims.push(asteroidId)
-  }
-
-  private undesignate(corp: SimCorp, asteroidId: string): void {
-    corp.claims = corp.claims.filter((id) => id !== asteroidId)
-    const a = this.asteroids.get(asteroidId)
-    if (a && a.claimedBy === corp.id) a.claimedBy = null
-  }
-
-  private buyShip(corp: SimCorp): void {
-    if (corp.ships.length >= MAX_SHIPS_PER_CORP) return
-    if (corp.credits < SHIP_COST) return
-    corp.credits -= SHIP_COST
-    corp.ships.push(this.makeShip(corp, false))
-    this.pushLog(`${corp.name} commissioned a hauler.`)
-  }
-
-  private buyMiner(corp: SimCorp): void {
-    if (corp.credits < MINER_COST) return
-    const ship = corp.ships.find((s) => !s.hasMiner)
-    if (!ship) return // no free hauler slot — commission a hauler first
-    corp.credits -= MINER_COST
-    ship.hasMiner = true
-    this.pushLog(`${corp.name} fitted an AutoMiner.`)
-  }
-
-  private sellResource(corp: SimCorp, resource: ResourceType): void {
-    const qty = corp.storage[resource] ?? 0
-    if (qty <= 0) return
-    corp.storage[resource] = 0
-    corp.credits += qty * (RESOURCE_SELL_PRICES[resource] ?? 1)
-  }
-
   // ---- simulation ----
-
-  setPaused(v: boolean): void {
-    if (this.phase === 'running') this.paused = v
-  }
-
-  /** A corp leaves the match — forfeits (removed from the race), claims released. */
-  forfeit(corpId: string): void {
-    const c = this.corps.get(corpId)
-    if (!c || !c.alive) return
-    this.liquidate(c)
-    this.pushLog(`${c.name} left the match.`)
-  }
 
   tick(dt: number): void {
     if (this.phase !== 'running' || this.paused) return
@@ -283,20 +315,21 @@ export class World {
       if (!corp.alive) continue
       if (corp.autoDesignate) this.autoDesignate(corp)
       this.dispatch(corp)
+      for (const m of corp.deployedMiners) this.updateMiner(m, dt)
       for (const ship of corp.ships) this.updateShip(corp, ship, dt)
+      // drop claims with no resource AND no deployed miner left
       corp.claims = corp.claims.filter((id) => {
         const a = this.asteroids.get(id)
-        return a && a.currentQuantity > 0 && a.claimedBy === corp.id
+        if (!a || a.claimedBy !== corp.id) return false
+        return a.currentQuantity > 0 || corp.deployedMiners.some((m) => m.asteroidId === id)
       })
     }
 
     if (this.t >= this.periodEndsAt) this.deadline()
   }
 
-  /** Auto-claim the best unclaimed rock while the fleet has an unworked miner-hauler. */
   private autoDesignate(corp: SimCorp): void {
-    const minerHaulers = corp.ships.filter((s) => s.hasMiner).length
-    if (corp.claims.length >= minerHaulers) return
+    if (corp.claims.length >= corp.minersOwned) return
     const id = this.bestUnclaimedAsteroid()
     if (id) this.designate(corp, id)
   }
@@ -311,31 +344,54 @@ export class World {
     return best?.id ?? null
   }
 
-  /** Assign idle MINER-EQUIPPED ships to claimed-but-uncovered asteroids. */
+  /** Assign idle haulers to claimed asteroids — to deploy a miner, then to shuttle. */
   private dispatch(corp: SimCorp): void {
-    const covered = new Set<string>()
-    for (const s of corp.ships) {
-      if (s.targetAsteroidId && (s.phase === 'to-asteroid' || s.phase === 'mining')) {
-        covered.add(s.targetAsteroidId)
-      }
-    }
-    for (const claimId of corp.claims) {
-      if (covered.has(claimId)) continue
-      const a = this.asteroids.get(claimId)
-      if (!a || a.currentQuantity <= 0 || a.claimedBy !== corp.id) continue
-      // only a hauler with an AutoMiner can work the rock (the money gate)
-      const ship = corp.ships.find((s) => s.phase === 'idle' && s.hasMiner && s.cargo <= 0)
+    const reserved = corp.ships.filter((s) => s.carryingMiner).length
+    let available = corp.minersOwned - corp.deployedMiners.length - reserved
+
+    for (const aid of corp.claims) {
+      const a = this.asteroids.get(aid)
+      if (!a || a.claimedBy !== corp.id) continue
+      const serviced = corp.ships.some((s) => s.targetAsteroidId === aid && s.phase !== 'idle')
+      if (serviced) continue
+      const hasMiner = corp.deployedMiners.some((m) => m.asteroidId === aid)
+      const ship = corp.ships.find((s) => s.phase === 'idle' && !s.targetAsteroidId)
       if (!ship) break
-      ship.targetAsteroidId = claimId
-      ship.phase = 'to-asteroid'
-      covered.add(claimId)
+      if (hasMiner) {
+        // miner already there — send a hauler to shuttle its nets
+        ship.targetAsteroidId = aid
+        ship.carryingMiner = false
+        ship.phase = 'to-asteroid'
+      } else if (available > 0 && a.currentQuantity > 0) {
+        // carry a fresh miner out to deploy
+        ship.targetAsteroidId = aid
+        ship.carryingMiner = true
+        ship.phase = 'to-asteroid'
+        available -= 1
+      }
     }
   }
 
-  private totalStored(corp: SimCorp): number {
-    let s = 0
-    for (const v of Object.values(corp.storage)) s += v ?? 0
-    return s
+  private minerAt(corp: SimCorp, asteroidId: string): SimMiner | undefined {
+    return corp.deployedMiners.find((m) => m.asteroidId === asteroidId)
+  }
+
+  private updateMiner(m: SimMiner, dt: number): void {
+    const a = this.asteroids.get(m.asteroidId)
+    if (!a || a.currentQuantity <= 0) {
+      m.state = 'depleted'
+      return
+    }
+    if (m.oreReady >= MINER_ORE_CAP) {
+      m.state = 'net-starved'
+      return
+    }
+    const amount = Math.min(MINE_RATE * dt, a.currentQuantity, MINER_ORE_CAP - m.oreReady)
+    if (amount > 0) {
+      a.currentQuantity -= amount
+      m.oreReady += amount
+    }
+    m.state = m.oreReady >= MINER_ORE_CAP ? 'net-starved' : 'mining'
   }
 
   private updateShip(corp: SimCorp, ship: SimShip, dt: number): void {
@@ -345,62 +401,126 @@ export class World {
 
       case 'to-asteroid': {
         const a = ship.targetAsteroidId ? this.asteroids.get(ship.targetAsteroidId) : undefined
-        if (!a || a.currentQuantity <= 0 || a.claimedBy !== corp.id) {
+        const minerHere = ship.targetAsteroidId ? this.minerAt(corp, ship.targetAsteroidId) : undefined
+        // target invalid: no asteroid, or (carrying a miner to) a depleted rock with no miner yet
+        if (!a || a.claimedBy !== corp.id || (ship.carryingMiner && a.currentQuantity <= 0 && !minerHere)) {
+          ship.carryingMiner = false
           ship.targetAsteroidId = null
           ship.phase = ship.cargo > 0 ? 'to-base' : 'idle'
           return
         }
-        if (this.moveToward(ship, a.x, a.y, dt)) ship.phase = 'mining'
+        if (this.moveToward(ship, a.x, a.y, dt)) {
+          if (ship.carryingMiner) {
+            ship.phase = 'deploying'
+            ship.timer = MINER_DEPLOY_SECONDS
+          } else {
+            ship.phase = 'collecting'
+            ship.timer = NET_COLLECT_SECONDS
+          }
+        }
         return
       }
 
-      case 'mining': {
+      case 'deploying': {
+        ship.timer -= dt
+        if (ship.timer > 0) return
         const a = ship.targetAsteroidId ? this.asteroids.get(ship.targetAsteroidId) : undefined
-        if (!a || a.currentQuantity <= 0 || a.claimedBy !== corp.id) {
+        if (a && !this.minerAt(corp, a.id)) {
+          corp.deployedMiners.push({
+            id: nanoid(8),
+            asteroidId: a.id,
+            x: a.x,
+            y: a.y,
+            resourceType: a.resourceType,
+            oreReady: 0,
+            state: 'mining',
+          })
+        }
+        ship.carryingMiner = false
+        ship.phase = 'collecting'
+        ship.timer = NET_COLLECT_SECONDS
+        return
+      }
+
+      case 'collecting': {
+        ship.timer -= dt
+        if (ship.timer > 0) return
+        const miner = ship.targetAsteroidId ? this.minerAt(corp, ship.targetAsteroidId) : undefined
+        if (!miner) {
           ship.targetAsteroidId = null
           ship.phase = ship.cargo > 0 ? 'to-base' : 'idle'
           return
         }
-        const cap = shipCapacity(ship)
-        const room = cap - ship.cargo
-        const got = Math.min(MINE_RATE * dt, room, a.currentQuantity)
-        if (got > 0) {
-          a.currentQuantity -= got
-          ship.cargo += got
-          ship.cargoResource = a.resourceType
+        // wait at the asteroid until at least one net is ready (or the miner is
+        // net-starved / done) — the miner buffers nets during the hauler's round trip
+        const ready =
+          miner.oreReady >= NET_CAPACITY ||
+          miner.state === 'net-starved' ||
+          miner.state === 'depleted' ||
+          ship.cargo > 0
+        if (!ready) {
+          ship.timer = NET_COLLECT_SECONDS
+          return
         }
-        const full = ship.cargo >= cap - 0.001
-        if (a.currentQuantity <= 0) {
-          a.claimedBy = null
-          corp.claims = corp.claims.filter((id) => id !== a.id)
-          ship.phase = 'to-base'
-        } else if (full) {
-          ship.phase = 'to-base'
+        const cap = shipCapacity(ship)
+        const take = Math.min(miner.oreReady, cap - ship.cargo)
+        if (take > 0) {
+          miner.oreReady -= take
+          ship.cargo += take * (1 - NET_LEAKAGE)
+          ship.cargoResource = miner.resourceType
+        }
+        const minerDone = miner.state === 'depleted' && miner.oreReady <= 0.01
+        if (minerDone) {
+          // recover the miner; release the claim if the rock is spent
+          corp.deployedMiners = corp.deployedMiners.filter((mm) => mm.id !== miner.id)
+          corp.claims = corp.claims.filter((id) => id !== miner.asteroidId)
+          const a = this.asteroids.get(miner.asteroidId)
+          if (a && a.claimedBy === corp.id) a.claimedBy = null
+          ship.targetAsteroidId = null
+          ship.phase = ship.cargo > 0 ? 'to-base' : 'idle'
+        } else if (ship.cargo > 0) {
+          ship.phase = 'to-base' // haul this batch; the miner buffers more meanwhile
+        } else {
+          ship.timer = NET_COLLECT_SECONDS
         }
         return
       }
 
       case 'to-base': {
         if (this.moveToward(ship, corp.baseX, corp.baseY, dt)) {
-          if (ship.unloadTimer <= 0) ship.unloadTimer = UNLOAD_SECONDS
-          ship.unloadTimer -= dt
-          if (ship.unloadTimer <= 0) {
-            this.deliver(corp, ship)
-            if (ship.cargo <= 0.5) {
-              ship.unloadTimer = 0
-              ship.phase = 'idle'
-            } else {
-              // storage full — wait at base and retry until the player sells
-              ship.unloadTimer = UNLOAD_SECONDS
-            }
-          }
+          ship.phase = 'unloading'
+          ship.timer = UNLOAD_SECONDS
+        }
+        return
+      }
+
+      case 'unloading': {
+        ship.timer -= dt
+        if (ship.timer > 0) return
+        this.deliver(corp, ship)
+        if (ship.cargo > 0.5) {
+          ship.timer = UNLOAD_SECONDS // storage full — wait, retry (player must sell)
+          return
+        }
+        // go back to the miner if it's still deployed, else idle
+        const stillMining = ship.targetAsteroidId && this.minerAt(corp, ship.targetAsteroidId)
+        if (stillMining) {
+          ship.phase = 'to-asteroid'
+        } else {
+          ship.targetAsteroidId = null
+          ship.phase = 'idle'
         }
         return
       }
     }
   }
 
-  /** Move cargo into base storage (what fits). Counts toward tonnage. */
+  private totalStored(corp: SimCorp): number {
+    let s = 0
+    for (const v of Object.values(corp.storage)) s += v ?? 0
+    return s
+  }
+
   private deliver(corp: SimCorp, ship: SimShip): void {
     if (ship.cargo <= 0 || !ship.cargoResource) {
       ship.cargo = 0
@@ -422,7 +542,6 @@ export class World {
     }
   }
 
-  /** Move a ship toward a point; returns true on arrival. Updates facing. */
   private moveToward(ship: SimShip, tx: number, ty: number, dt: number): boolean {
     const dx = tx - ship.x
     const dy = ty - ship.y
@@ -481,9 +600,11 @@ export class World {
       if (a && a.claimedBy === corp.id) a.claimedBy = null
     }
     corp.claims = []
+    corp.deployedMiners = []
     for (const s of corp.ships) {
       s.phase = 'idle'
       s.targetAsteroidId = null
+      s.carryingMiner = false
     }
     this.pushLog(`💀 ${corp.name} liquidated — ${corp.periodTonnage} t against a ${this.quota} t quota.`)
   }
@@ -519,7 +640,16 @@ export class World {
       credits: Math.floor(c.credits),
       storage: roundStorage(c.storage),
       storageCapacity: STORAGE_CAPACITY,
-      minerCount: c.ships.filter((s) => s.hasMiner).length,
+      minerCount: c.minersOwned,
+      miners: c.deployedMiners.map((m) => ({
+        id: m.id,
+        x: m.x,
+        y: m.y,
+        asteroidId: m.asteroidId,
+        resourceType: m.resourceType,
+        netsReady: Math.floor(m.oreReady / NET_CAPACITY),
+        state: m.state,
+      })),
       autoDesignate: c.autoDesignate,
       tonnage: Math.round(c.tonnage),
       periodTonnage: Math.round(c.periodTonnage),
@@ -537,7 +667,7 @@ export class World {
         cargoLevel: s.cargoLevel,
         cargoResource: s.cargoResource,
         targetAsteroidId: s.targetAsteroidId,
-        hasMiner: s.hasMiner,
+        carryingMiner: s.carryingMiner,
       })),
     }))
     return {

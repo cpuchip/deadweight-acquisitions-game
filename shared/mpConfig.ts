@@ -39,8 +39,15 @@ export const SHIP_CARGO_CAPACITY = CARGO_CAPACITY_TIERS[0] // starting capacity 
 
 // --- ship behaviour ---
 export const SHIP_SPEED = 180 // world units / sec (Ship.SHIP_SPEED)
-export const MINE_RATE = 10 // tons / sec a miner-equipped hauler extracts (SP miner is 5; MP folds net micro)
+export const MINE_RATE = 10 // tons / sec a DEPLOYED miner extracts at its asteroid
 export const UNLOAD_SECONDS = 1.5 // dwell at base while moving cargo into storage
+
+// --- v5 deep mining loop (hauler deploys a miner, which ejects nets the hauler shuttles) ---
+export const NET_CAPACITY = 50 // ore per net (Dave's NET_CAPACITY) — a display unit here
+export const MINER_NET_BUFFER = 4 // nets a deployed miner holds before it's net-starved (paused)
+export const NET_LEAKAGE = 0.05 // fraction lost when the hauler collects ore (Dave's NET_LEAKAGE_FRACTION)
+export const MINER_DEPLOY_SECONDS = 1.5 // dwell to deploy or recover a miner
+export const NET_COLLECT_SECONDS = 0.8 // dwell to collect nets at the asteroid
 
 export const ARRIVAL_RADIUS = 28 // world units, "close enough" to a point
 

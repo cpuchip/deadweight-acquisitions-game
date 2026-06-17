@@ -24,9 +24,11 @@
 
   const SHIP_STATE: Record<string, string> = {
     idle: 'idle',
-    'to-asteroid': 'en route to asteroid',
-    mining: 'mining',
+    'to-asteroid': 'en route',
+    deploying: 'deploying miner',
+    collecting: 'collecting nets',
     'to-base': 'hauling to base',
+    unloading: 'unloading',
   }
   function findShip(w: WorldSnapshot | null, id: string | null): { ship: ShipSnap; corp: CorpSnap } | null {
     if (!w || !id) return null
@@ -128,7 +130,7 @@
       <button class="act quick" class:on={$mpQuickClaim} on:click={toggleQuickClaim} title="When on, clicking an asteroid claims it immediately (otherwise: select, then Designate)">
         ⚡ quick-claim: {$mpQuickClaim ? 'on' : 'off'}
       </button>
-      <div class="fleet">{shipCount} hauler{shipCount === 1 ? '' : 's'} · {me.minerCount} miner{me.minerCount === 1 ? '' : 's'} · ore {stored}/{me.storageCapacity}</div>
+      <div class="fleet">{shipCount} hauler{shipCount === 1 ? '' : 's'} · {me.minerCount} miner{me.minerCount === 1 ? '' : 's'} ({me.miners.length} deployed) · ore {stored}/{me.storageCapacity}</div>
     </div>
   {/if}
 
@@ -159,7 +161,9 @@
       </div>
       <div class="sel-row"><span>state</span><span>{SHIP_STATE[selShip.ship.phase] ?? selShip.ship.phase}</span></div>
       <div class="sel-row"><span>cargo</span><span>{selShip.ship.cargo} / {selShip.ship.cargoCapacity}{selShip.ship.cargoResource ? ' · ' + selShip.ship.cargoResource : ''}</span></div>
-      <div class="sel-row"><span>AutoMiner</span><span>{selShip.ship.hasMiner ? 'fitted' : 'none'}</span></div>
+      {#if selShip.ship.carryingMiner}
+        <div class="sel-row"><span>bay</span><span>carrying a miner</span></div>
+      {/if}
       {#if selShip.corp.id === $mpYouCorpId}
         {#if selShip.ship.cargoLevel < MAX_CARGO_LEVEL}
           <button

@@ -91,18 +91,21 @@ async function main(): Promise<void> {
   }
   assert(dispatched, 'after buying a miner, a hauler dispatches to the claim')
 
-  // the full loop should bank tonnage within a generous window
+  // the deep loop (deploy -> net -> shuttle) should bank tonnage; give it room
   let earned = false
-  for (let i = 0; i < 70; i++) {
+  let sawMiner = false
+  for (let i = 0; i < 140; i++) {
     await sleep(500)
     const a = alpha.snap?.corps.find((c) => c.id === alpha.corpId)
+    if ((a?.miners.length ?? 0) > 0) sawMiner = true
     if ((a?.tonnage ?? 0) > 0) {
       earned = true
       console.log(`  Alpha banked ${a!.tonnage}t, credits ${a!.credits}`)
       break
     }
   }
-  assert(earned, 'mine->haul->sell loop banked tonnage over the network')
+  assert(sawMiner, 'a miner was deployed at the asteroid')
+  assert(earned, 'deep loop shuttled ore to base over the network')
 
   // v4: ship naming + cargo upgrade over the network
   {

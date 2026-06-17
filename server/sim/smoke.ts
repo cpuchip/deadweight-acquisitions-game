@@ -55,11 +55,11 @@ function ai(): void {
       for (const [res, qty] of Object.entries(corp.storage) as [ResourceType, number][]) {
         if ((qty ?? 0) > 0) world.applyCommand(corp.id, { kind: 'sell', resource: res })
       }
-      const minered = corp.minerCount
-      const slots = corp.ships.length - minered // haulers without a miner
-      if (minered < target) {
-        if (slots > 0 && corp.credits >= MINER_COST) world.applyCommand(corp.id, { kind: 'buyMiner' })
-        else if (corp.ships.length < target && corp.credits >= SHIP_COST) world.applyCommand(corp.id, { kind: 'buyShip' })
+      // each active asteroid wants a miner to deploy + a hauler to shuttle
+      if (corp.minerCount < target && corp.credits >= MINER_COST) {
+        world.applyCommand(corp.id, { kind: 'buyMiner' })
+      } else if (corp.ships.length < target && corp.credits >= SHIP_COST) {
+        world.applyCommand(corp.id, { kind: 'buyShip' })
       }
     }
     const myClaims = snap.asteroids.filter((a) => a.claimedBy === corp.id).length
@@ -86,7 +86,7 @@ for (let i = 0; i < ticks; i++) {
     secAccum = 0
     ai()
     const snap = world.snapshot()
-    if (snap.corps.some((c) => c.ships.some((s) => s.phase === 'mining'))) everMined = true
+    if (snap.corps.some((c) => c.miners.length > 0)) everMined = true
     const aliveNow = new Set(snap.corps.filter((c) => c.alive).map((c) => c.id))
     for (const id of prevAlive) {
       if (!aliveNow.has(id)) {
@@ -111,8 +111,8 @@ const final = world.snapshot()
 console.log('\nfinal:', JSON.stringify(final.corps.map((c) => ({ n: c.name, t: c.tonnage, m: c.minerCount, alive: c.alive })), null, 0))
 console.log('winner:', final.winnerCorpId, 'phase:', final.phase)
 
-assert(everMined, 'a miner-equipped hauler actually mined (economy works)')
-assert(final.corps.find((c) => c.id === AGGRESSIVE)!.tonnage > 0, 'aggressive corp delivered tonnage')
+assert(everMined, 'miners deployed at asteroids (the deep loop ran)')
+assert(final.corps.find((c) => c.id === AGGRESSIVE)!.tonnage > 0, 'aggressive corp shuttled ore to base (tonnage)')
 assert(final.corps.find((c) => c.id === AGGRESSIVE)!.minerCount > 0, 'aggressive corp bought miners (money gate)')
 assert(final.corps.find((c) => c.id === PASSIVE)!.tonnage === 0, 'passive corp (no miners) delivered nothing — the money gate held')
 assert(liquidations >= 1, 'at least one corp was liquidated at a quota deadline')
@@ -144,6 +144,17 @@ assert(
     w.snapshot().asteroids.some((a) => a.claimedBy === 'Z'),
     'auto-designate auto-claims an asteroid for an idle miner-hauler',
   )
+
+  // v5 deep loop: hauler carries a miner out -> deploys it -> miner ejects nets ->
+  // hauler shuttles them to base -> tonnage delivered
+  let deployed = false
+  for (let i = 0; i < 80 * SIM_HZ; i++) {
+    w.tick(dt)
+    if (w.snapshot().corps[0].miners.length > 0) deployed = true
+    if (w.snapshot().corps[0].tonnage > 0) break
+  }
+  assert(deployed, 'a miner was deployed at the claimed asteroid')
+  assert(w.snapshot().corps[0].tonnage > 0, 'deep loop delivered ore (deploy -> net -> shuttle -> base)')
 }
 
 if (failures > 0) {

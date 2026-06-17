@@ -16,7 +16,7 @@
   $: me = world ? world.corps.find((c) => c.id === $mpYouCorpId) ?? null : null
   $: show = $mpConnection === 'connected' && $mpBasePanelOpen && me && me.alive
   $: stored = me ? Object.values(me.storage).reduce((s, n) => s + (n ?? 0), 0) : 0
-  $: freeSlots = me ? me.ships.length - me.minerCount : 0
+  $: deployed = me ? me.miners.length : 0
 
   function close(): void {
     mpBasePanelOpen.set(false)
@@ -43,7 +43,7 @@
     </div>
     <div class="row"><span class="label">Credits</span><span class="value credits">{me.credits}</span></div>
     <div class="row"><span class="label">Storage</span><span class="value">{Math.floor(stored)} / {me.storageCapacity}</span></div>
-    <div class="row"><span class="label">Fleet</span><span class="value">{me.ships.length} hauler{me.ships.length === 1 ? '' : 's'} · {me.minerCount} miner{me.minerCount === 1 ? '' : 's'}</span></div>
+    <div class="row"><span class="label">Fleet</span><span class="value">{me.ships.length} hauler{me.ships.length === 1 ? '' : 's'} · {me.minerCount} miner{me.minerCount === 1 ? '' : 's'} ({deployed} deployed)</span></div>
 
     <div class="sec">MARKET</div>
     {#each RESOURCE_ORDER as type}
@@ -66,12 +66,10 @@
     </div>
 
     <div class="sec">EQUIPMENT</div>
-    <div class="row buy" class:off={me.credits < MINER_COST || freeSlots <= 0}>
+    <div class="row buy" class:off={me.credits < MINER_COST}>
       <span class="label">AutoMiner</span>
       <span class="price">{MINER_COST}cr</span>
-      <button class="btn" disabled={me.credits < MINER_COST || freeSlots <= 0} on:click={buyMiner}>
-        {freeSlots <= 0 ? 'No free hauler' : 'Buy'}
-      </button>
+      <button class="btn" disabled={me.credits < MINER_COST} on:click={buyMiner}>Buy</button>
     </div>
     <div class="sec">AUTOMATION</div>
     <div class="row buy">
@@ -82,11 +80,11 @@
 
     <div class="hint">
       {#if me.minerCount === 0}
-        Buy an AutoMiner, then claim an asteroid on the map — a miner-equipped hauler mines it.
+        Buy an AutoMiner, then claim an asteroid — a hauler carries the miner out and deploys it.
       {:else if me.autoDesignate}
-        Auto-designate is ON — idle miner-haulers claim the richest free asteroids for you.
+        Auto-designate is ON — idle haulers carry miners to the richest free asteroids for you.
       {:else}
-        A hauler needs an AutoMiner to mine. Mined ore hauls here to storage — sell it for credits.
+        Haulers carry miners to your claimed asteroids and shuttle the nets back here. Sell ore for credits.
       {/if}
     </div>
   </div>

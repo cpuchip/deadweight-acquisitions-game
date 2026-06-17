@@ -105,6 +105,16 @@ on push is fixed (GitHub App granted access to the repo).
   - **Re-sequenced:** multiple-miners-per-hauler (attachment slots) MOVED to **v5** —
     it's meaningless until miners are separately deployable (the v5 deep-mining loop).
     Same destination, cleaner phase boundary.
-- **v5 NEXT:** the deep mining loop — hauler **deploys** a miner at the asteroid →
-  miner mines + **ejects nets** → hauler **collects nets** and hauls to base; attachment
-  slots (net-store + 2 medium = multi-miner haulers); beacons + orphaned-net recovery.
+- **v5a COMPLETE 2026-06-17 — the deep mining loop core:**
+  - Miners are now a **pool** (bought, not mounted). A hauler **carries a miner out and
+    DEPLOYS it** at the claimed asteroid; the deployed miner **mines + ejects nets**
+    (buffered, with **net-starved** backpressure); the hauler **shuttles** the nets to
+    base storage; tonnage = ore delivered. Miner **recovered** on depletion. ✓
+  - Deployed miners + their tethered nets render at asteroids; haulers show a
+    carrying-miner / nets-aboard marker. Ship states: en route / deploying / collecting
+    / hauling / unloading. Base panel + ship panel updated to the pool model.
+  - Verified: smoke + wstest (deploy + shuttle + tonnage) green local + **prod**; browser
+    e2e (auto-mined 53t via deploy→net→shuttle).
+- **v5b NEXT (the polish):** orphaned-net recovery (designate-for-collection), beacons
+  for net-starved miners, **multiple miners per hauler** (attachment slots — net-store +
+  2 medium), miner/net detail panels.
