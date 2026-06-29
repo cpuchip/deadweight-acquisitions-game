@@ -32,6 +32,13 @@ problem.
   `worldGenerator.ts` — the server generates the shared field with Dave's own code.
 - **Reimplemented as plain data (multi-corp):** the ship/mining state machine,
   because the originals extend Phaser classes and there is one corp's worth of them.
+- **Renders from Dave's generated atlases** (loaded in `BootScene`, so cached before
+  this scene runs): `MultiplayerScene` draws the planet, asteroids (per-resource frame),
+  the modular station (hub + solar/dock/tank/habitat, hub tinted per corp), haulers
+  (`hauler` frame, +90° art offset, corp-tinted), deployed miners (`miner` frame), and
+  the additive thruster plume (`fx-flame`) — a pooled sprite layer keyed by entity id,
+  over a background graphics layer (starfield/glow) and a foreground graphics layer
+  (claim/selection rings, beacons, tethered nets, attachment bars, progress arcs).
 
 ## Scope — faithful economy (v2, 2026-06-17) vs. deferred micro
 
