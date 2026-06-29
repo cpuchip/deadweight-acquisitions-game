@@ -81,6 +81,9 @@ export interface AsteroidSnap {
   claimedBy: string | null
   /** true for company asteroids (the richer rocks that arrive over time) */
   isCompany: boolean
+  /** large (high-yield) rocks are unknown until a ship scouts near them; smaller
+   * rocks are always true. Drives the 'unknown' sprite + the "scan to reveal" panel. */
+  scanned: boolean
 }
 
 export interface ShipSnap {

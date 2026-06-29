@@ -157,6 +157,10 @@ interface SimMiner {
 
 const RESOURCE_TYPES: ResourceType[] = ['iron', 'ice', 'silicates', 'rare-metals']
 
+/** A ship/miner within this range of a large rock scouts (reveals) it. Generous so a
+ * pass near a big rock reveals it, but distant high-yield rocks stay mysteries to scout. */
+const SCAN_RANGE = 800
+
 /** A fresh per-corp market set, each resource seeded at its reference baseline. */
 function freshMarkets(): Record<ResourceType, ResourceMarket> {
   return {
@@ -545,9 +549,45 @@ export class World {
       })
     }
 
+    this.revealLargeRocks()
     this.companyArrivals(dt)
 
     if (this.t >= this.periodEndsAt) this.deadline()
+  }
+
+  /** Fog-of-war on the high-yield rocks (faithful to Dave's scan gate): large asteroids
+   * are "unknown" until a ship or deployed miner scouts within SCAN_RANGE — then they
+   * reveal (globally) their resource. Small/medium rocks are always known. Reveal-only,
+   * never re-hides; the cost is one proximity sweep over the few unscanned large rocks. */
+  private revealLargeRocks(): void {
+    let anyUnscanned = false
+    for (const a of this.asteroids.values()) {
+      if (a.sizeCategory === 'large' && !a.scanned) {
+        anyUnscanned = true
+        break
+      }
+    }
+    if (!anyUnscanned) return
+    for (const a of this.asteroids.values()) {
+      if (a.sizeCategory !== 'large' || a.scanned) continue
+      for (const corp of this.corps.values()) {
+        if (this.scoutNear(corp, a.x, a.y)) {
+          a.scanned = true
+          break
+        }
+      }
+    }
+  }
+
+  /** True if any of the corp's ships or deployed miners sits within SCAN_RANGE of (x,y). */
+  private scoutNear(corp: SimCorp, x: number, y: number): boolean {
+    for (const s of corp.ships) {
+      if (Math.hypot(s.x - x, s.y - y) <= SCAN_RANGE) return true
+    }
+    for (const m of corp.deployedMiners) {
+      if (Math.hypot(m.x - x, m.y - y) <= SCAN_RANGE) return true
+    }
+    return false
   }
 
   /** Dynamic sell economy (faithful to Dave's SP): roll occasional global market events
@@ -1097,6 +1137,8 @@ export class World {
         maxQuantity: a.maxQuantity,
         claimedBy: a.claimedBy,
         isCompany: a.isCompany,
+        // only large (high-yield) rocks are gated; everything else is always known
+        scanned: a.sizeCategory !== 'large' || a.scanned,
       })
     }
     const corps = [...this.corps.values()].map((c) => ({

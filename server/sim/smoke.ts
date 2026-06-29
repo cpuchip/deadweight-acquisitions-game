@@ -502,6 +502,38 @@ assert(final.asteroids.some((a) => a.isCompany), 'company asteroids are flagged 
   }
 }
 
+// ---- Tier 3c: scan gate — large (high-yield) rocks are unknown until scouted ----
+{
+  const w = new World(42)
+  w.addCorp('S', 'Scout', 0x44ffcc)
+  w.start()
+  const snap0 = w.snapshot()
+  const small = snap0.asteroids.find((a) => a.sizeCategory !== 'large')
+  assert(!small || small.scanned, 'non-large rocks are always known (scanned)')
+  // find the farthest large rock so it starts well outside any starting ship's scan range
+  const base = snap0.corps[0]
+  let far: { id: string; d: number } | null = null
+  for (const a of snap0.asteroids) {
+    if (a.sizeCategory !== 'large') continue
+    const d = Math.hypot(a.x - base.baseX, a.y - base.baseY)
+    if (!far || d > far.d) far = { id: a.id, d }
+  }
+  assert(!!far, 'the field has a large rock to scout')
+  const startUnknown = snap0.asteroids.find((a) => a.id === far!.id)
+  assert(!!startUnknown && !startUnknown.scanned, 'a distant large rock starts unscanned (a mystery)')
+
+  // designate it: the hauler carries the starter miner toward the rock and, on passing
+  // within scan range, reveals it
+  w.applyCommand('S', { kind: 'designate', asteroidId: far!.id })
+  let revealed = false
+  for (let i = 0; i < 300 * SIM_HZ && !revealed; i++) {
+    w.tick(dt)
+    const a = w.snapshot().asteroids.find((x) => x.id === far!.id)
+    if (a?.scanned) revealed = true
+  }
+  assert(revealed, 'scouting a ship near a large rock reveals it (scanned -> true)')
+}
+
 if (failures > 0) {
   console.error(`\n${failures} assertion(s) failed`)
   process.exit(1)

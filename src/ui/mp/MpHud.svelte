@@ -160,9 +160,16 @@
   <!-- selected asteroid -->
   {#if selected}
     <div class="sel">
+      {#if !selected.scanned}
+        <div class="sel-title unknown">??? UNSCANNED</div>
+        <div class="sel-row"><span>remaining</span><span>??? t</span></div>
+        <div class="sel-row"><span>size</span><span>{selected.sizeCategory} (high-yield)</span></div>
+        <div class="need-miner">Unknown rock — scout a ship near it to reveal its resource.</div>
+      {:else}
       <div class="sel-title resource-{selected.resourceType}">{selected.resourceType.toUpperCase()}</div>
       <div class="sel-row"><span>remaining</span><span>{selected.currentQuantity} / {selected.maxQuantity} t</span></div>
       <div class="sel-row"><span>size</span><span>{selected.sizeCategory}</span></div>
+      {/if}
       {#if selected.claimedBy === $mpYouCorpId}
         <button class="sel-btn release" on:click={() => claim(selected)}>RELEASE CLAIM</button>
       {:else if !selected.claimedBy}
@@ -504,6 +511,9 @@
     font-size: 12px;
     letter-spacing: 1px;
     margin-bottom: 6px;
+  }
+  .sel-title.unknown {
+    color: #8a99a8; /* muted — a mystery rock until scouted */
   }
   .sel-row {
     display: flex;

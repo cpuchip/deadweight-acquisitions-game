@@ -325,12 +325,16 @@ export class MultiplayerScene extends Phaser.Scene {
 
   private ensureAst(a: AsteroidSnap): Phaser.GameObjects.Image | null {
     if (!this.textures.exists(ASTEROID_ATLAS)) return null
+    // unscanned (large) rocks read as the generic 'unknown' frame until a ship scouts
+    // near them; otherwise the per-resource frame (iron/ice/silicates/rare-metals)
+    const tex = this.textures.get(ASTEROID_ATLAS)
+    const frame = !a.scanned || !tex.has(a.resourceType) ? 'unknown' : a.resourceType
     let s = this.astSprites.get(a.id)
     if (!s) {
-      // frame name is the resource type (iron/ice/silicates/rare-metals)
-      const frame = this.textures.get(ASTEROID_ATLAS).has(a.resourceType) ? a.resourceType : 'unknown'
       s = this.add.image(a.x, a.y, ASTEROID_ATLAS, frame).setDepth(MultiplayerScene.D_ASTEROID)
       this.astSprites.set(a.id, s)
+    } else if (s.frame.name !== frame) {
+      s.setFrame(frame) // a rock just revealed — swap unknown -> its resource
     }
     return s
   }
