@@ -1,5 +1,6 @@
 import { nanoid } from 'nanoid'
 import { createRng, rngInt, rngFloat, rngWeighted } from './rng'
+import { generateComposition, dominantResource, type Composition } from './composition'
 import {
   MOON_ORBIT_RADIUS,
   MOON_DEBRIS_SPREAD_RADIUS,
@@ -24,6 +25,8 @@ export interface AsteroidData {
   orbitalRadius: number
   orbitalAngle: number
   resourceType: ResourceType
+  composition: Composition
+  scanned: boolean
   sizeCategory: SizeCategory
   currentQuantity: number
   maxQuantity: number
@@ -46,7 +49,8 @@ export function generateWorld(seed: number): AsteroidData[] {
     const x = moonCenterX + Math.cos(spreadAngle) * spreadRadius
     const y = moonCenterY + Math.sin(spreadAngle) * spreadRadius
 
-    const resourceType = rngWeighted(rng, MOON_RESOURCE_WEIGHTS)
+    const composition = generateComposition(rng, MOON_RESOURCE_WEIGHTS)
+    const resourceType = dominantResource(composition)
     const sizeCategory = rngWeighted(rng, SIZE_WEIGHTS)
     const sizeConfig = SIZE_CONFIGS[sizeCategory]
     const maxQuantity = rngInt(rng, sizeConfig.quantityMin, sizeConfig.quantityMax)
@@ -58,6 +62,8 @@ export function generateWorld(seed: number): AsteroidData[] {
       orbitalRadius: Math.sqrt(x * x + y * y),
       orbitalAngle: Math.atan2(y, x),
       resourceType,
+      composition,
+      scanned: false,
       sizeCategory,
       currentQuantity: maxQuantity,
       maxQuantity,
@@ -73,7 +79,8 @@ export function generateWorld(seed: number): AsteroidData[] {
     const x = Math.cos(angle) * distance
     const y = Math.sin(angle) * distance
 
-    const resourceType = rngWeighted(rng, COMPANY_RESOURCE_WEIGHTS)
+    const composition = generateComposition(rng, COMPANY_RESOURCE_WEIGHTS)
+    const resourceType = dominantResource(composition)
     const sizeCategory = rngWeighted(rng, SIZE_WEIGHTS)
     const sizeConfig = SIZE_CONFIGS[sizeCategory]
     const maxQuantity = rngInt(rng, sizeConfig.quantityMin, sizeConfig.quantityMax)
@@ -85,6 +92,8 @@ export function generateWorld(seed: number): AsteroidData[] {
       orbitalRadius: distance,
       orbitalAngle: angle,
       resourceType,
+      composition,
+      scanned: false,
       sizeCategory,
       currentQuantity: maxQuantity,
       maxQuantity,
@@ -102,7 +111,8 @@ export function generateCompanyAsteroid(seed: number): AsteroidData {
   const x = Math.cos(angle) * distance
   const y = Math.sin(angle) * distance
 
-  const resourceType = rngWeighted(rng, COMPANY_RESOURCE_WEIGHTS)
+  const composition = generateComposition(rng, COMPANY_RESOURCE_WEIGHTS)
+  const resourceType = dominantResource(composition)
   const sizeCategory = rngWeighted(rng, SIZE_WEIGHTS)
   const sizeConfig = SIZE_CONFIGS[sizeCategory]
   const maxQuantity = rngInt(rng, sizeConfig.quantityMin, sizeConfig.quantityMax)
@@ -114,6 +124,8 @@ export function generateCompanyAsteroid(seed: number): AsteroidData {
     orbitalRadius: distance,
     orbitalAngle: angle,
     resourceType,
+    composition,
+    scanned: false,
     sizeCategory,
     currentQuantity: maxQuantity,
     maxQuantity,

@@ -1,6 +1,6 @@
 {
   "name": "deadweight-acquisitions",
-  "version": "0.3.31",
+  "version": "0.3.58",
   "type": "module",
   "scripts": {
     "dev": "vite",

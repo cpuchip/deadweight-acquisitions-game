@@ -160,7 +160,12 @@ assert(final.asteroids.some((a) => a.isCompany), 'company asteroids are flagged 
 
 // ---- v5b: net-starved beacon + recall ----
 {
-  const w = new World(777)
+  // Seed chosen so the field's farthest LARGE rock sits well beyond the single-hauler
+  // keep-up radius (~1700u): seed 42 → farthest large rock ≈ 2886u. The starve scenario
+  // depends on procedural layout, so if a world-gen change (e.g. Dave's composition draws)
+  // shifts the field, re-pick a seed with a far large rock — the precondition assert below
+  // guards the floor so a too-close field fails at setup, not mysteriously at the starve.
+  const w = new World(42)
   w.addCorp('S', 'Starver', 0x55ccff)
   w.start()
   w.applyCommand('S', { kind: 'buyMiner' })
@@ -174,7 +179,7 @@ assert(final.asteroids.some((a) => a.isCompany), 'company asteroids are flagged 
     const d = Math.hypot(a.x - base.baseX, a.y - base.baseY)
     if (!far || d > far.d) far = { id: a.id, d }
   }
-  assert(!!far, 'found a far large asteroid to starve a miner against')
+  assert(!!far && far.d > 1700, 'found a far-enough large asteroid to starve a miner against (>1700u)')
   w.applyCommand('S', { kind: 'designate', asteroidId: far!.id })
 
   let everStarved = false

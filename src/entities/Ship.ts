@@ -9,6 +9,13 @@ import { makeDefaultLoadout, type AttachmentPoint } from '../state/attachmentTyp
 import { MINER_DEPLOY_PROXIMITY } from './AutoMiner'
 
 export const SHIP_TEXTURE_KEY = 'ship'
+// Generated atlas (asset-harness). When loaded, the hauler renders from this instead of the
+// fallback triangle. The atlas art points "up"; in-game heading 0 = east, so a +90° render
+// offset is applied, and the large frame is scaled down to SHIP_DISPLAY_LENGTH.
+export const SHIP_ATLAS_KEY = 'dwa_ships'
+export const SHIP_ATLAS_FRAME = 'hauler'
+const SHIP_DISPLAY_LENGTH = 36   // px along the travel axis for the atlas sprite
+const SHIP_ART_ANGLE_OFFSET = 90 // atlas art faces up; heading 0 faces east
 export const SHIP_SPEED = 180          // world units per second
 export const SHIP_TURN_RATE = 180      // degrees per second
 export const ARRIVAL_RADIUS = 20       // world units — used for base arrival
@@ -63,6 +70,37 @@ export function generateShipTexture(scene: Phaser.Scene): void {
   gfx.destroy()
 }
 
+export const PARTICLE_TEXTURE_KEY = 'fx-particle'
+// Generated flame sprite (asset-harness vfx) for the thruster plume; additive on black, so it
+// drops onto the ADD-blend emitter directly. Falls back to the procedural dot if absent.
+export const FLAME_TEXTURE_KEY = 'fx-flame'
+
+/** Soft round dot used (tinted) for both thruster exhaust and RCS puffs. */
+export function generateParticleTexture(scene: Phaser.Scene): void {
+  if (scene.textures.exists(PARTICLE_TEXTURE_KEY)) return
+  const size = 12
+  const c = size / 2
+  const gfx = scene.make.graphics({ x: 0, y: 0 })
+  // Layered translucent circles approximate a soft radial falloff.
+  gfx.fillStyle(0xffffff, 0.25)
+  gfx.fillCircle(c, c, c)
+  gfx.fillStyle(0xffffff, 0.45)
+  gfx.fillCircle(c, c, c * 0.6)
+  gfx.fillStyle(0xffffff, 1)
+  gfx.fillCircle(c, c, c * 0.3)
+  gfx.generateTexture(PARTICLE_TEXTURE_KEY, size, size)
+  gfx.destroy()
+}
+
+// Exhaust plume geometry/timing.
+const EXHAUST_OFFSET = 24        // world units behind the hull center (plume sits further back)
+const EXHAUST_SPREAD = 5         // degrees of cone half-angle (fallback soft-dot emitter only)
+const PLUME_LENGTH = 72          // billboard plume length (world units) behind the nozzle
+const PLUME_WIDTH = 15           // billboard plume width (world units) — slim
+// RCS puff timing/geometry.
+const RCS_PUFF_INTERVAL = 0.28   // seconds between maneuvering puffs
+const RCS_FLANK_OFFSET = 7       // world units to the side of the hull
+
 export class Ship extends Phaser.Physics.Arcade.Sprite {
   readonly id: string
   readonly shipName: string
@@ -76,12 +114,14 @@ export class Ship extends Phaser.Physics.Arcade.Sprite {
   heading: number   // degrees, 0 = east
   attachmentPoints: AttachmentPoint[]
   asteroidTarget: Asteroid | null
+  isScanJob: boolean = false // travelling to the asteroidTarget to scan it, not mine it
   speedMultiplier = 1.0
   unloadTimer: number
   attachUnloadTimer: number = 0
   attachUnloadActive: boolean = false
   waitOrbitalAngle: number | null = null
   dockSlotIndex: number | null = null
+  dockIsPublic: boolean = false // docked at a public (fee) dock vs a free owned one
   hangarSlotIndex: number | null = null
   hangarServiceTimer: number = 0
   minerTarget: AutoMiner | null = null
@@ -93,6 +133,12 @@ export class Ship extends Phaser.Physics.Arcade.Sprite {
   private progressBarGfx: Phaser.GameObjects.Graphics | null = null
   private attachUnloadGfx: Phaser.GameObjects.Graphics | null = null
   private slotGfx: Phaser.GameObjects.Graphics | null = null
+  private exhaustEmitter: Phaser.GameObjects.Particles.ParticleEmitter | null = null
+  private exhaustPlume: Phaser.GameObjects.Image | null = null
+  private rcsEmitter: Phaser.GameObjects.Particles.ParticleEmitter | null = null
+  private rcsPuffCooldown = 0
+  private artAngleOffset = 0  // render offset for atlas art orientation (0 for fallback)
+  private baseScale = 1       // spawn (1.0×) reference scale; fly-by looming multiplies this
   isSelected: boolean
 
   constructor(
@@ -104,7 +150,11 @@ export class Ship extends Phaser.Physics.Arcade.Sprite {
     base: Base,
     id?: string,
   ) {
-    super(scene, x, y, SHIP_TEXTURE_KEY)
+    super(
+      scene, x, y,
+      scene.textures.exists(SHIP_ATLAS_KEY) ? SHIP_ATLAS_KEY : SHIP_TEXTURE_KEY,
+      scene.textures.exists(SHIP_ATLAS_KEY) ? SHIP_ATLAS_FRAME : undefined,
+    )
     this.id = id ?? nanoid()
     this.shipName = name
     this.cargoCapacity = CARGO_CAPACITY_TIERS[0]
@@ -127,7 +177,18 @@ export class Ship extends Phaser.Physics.Arcade.Sprite {
     scene.add.existing(this)
     scene.physics.add.existing(this)
     this.setOrigin(0.5, 0.5)
+    if (this.texture.key === SHIP_ATLAS_KEY) {
+      this.artAngleOffset = SHIP_ART_ANGLE_OFFSET
+      this.setScale(SHIP_DISPLAY_LENGTH / this.height)
+    }
+    this.baseScale = this.scaleX
+    this.setAngle(this.heading + this.artAngleOffset)
     this.setInteractive()
+  }
+
+  /** Applies the fly-by looming factor on top of the spawn scale (1.0 = cruise). */
+  setFlybyScale(factor: number): void {
+    this.setScale(this.baseScale * factor)
   }
 
   issueMoveTo(worldX: number, worldY: number): void {
@@ -136,14 +197,32 @@ export class Ship extends Phaser.Physics.Arcade.Sprite {
     this.pushToStore()
   }
 
-  updateSteering(dt: number): void {
-    const isTransit =
+  /** True while the hull is under main-thruster transit (burns thrusterFuel). */
+  private inTransit(): boolean {
+    return (
       this.shipState === 'traveling-to-asteroid' ||
       this.shipState === 'traveling-to-base' ||
       this.shipState === 'responding-to-beacon' ||
       this.shipState === 'traveling-to-hangar' ||
       this.shipState === 'fetching-station-miner' ||
       this.shipState === 'moving'
+    )
+  }
+
+  /** True while the hull is holding position on RCS (drains rcsFuel). */
+  private inManeuver(): boolean {
+    return (
+      this.shipState === 'entering-hangar' ||
+      this.shipState === 'deploying-miner' ||
+      this.shipState === 'waiting-at-asteroid' ||
+      this.shipState === 'collecting-nets' ||
+      this.shipState === 'resupplying-miner' ||
+      this.shipState === 'loading-miner'
+    )
+  }
+
+  updateSteering(dt: number): void {
+    const isTransit = this.inTransit()
     if (isTransit) {
       if (this.thrusterFuel <= 0) {
         this.setVelocity(0, 0)
@@ -171,7 +250,7 @@ export class Ship extends Phaser.Physics.Arcade.Sprite {
         // On arrival, SpaceScene detects the deploying-miner state and calls performDeploy.
         this.steerTowardTarget(dt, MINER_DEPLOY_PROXIMITY, () => {
           this.setVelocity(0, 0)
-          this.shipState = 'deploying-miner'
+          this.shipState = this.isScanJob ? 'scanning' : 'deploying-miner'
           this.pushToStore()
         })
         break
@@ -205,6 +284,7 @@ export class Ship extends Phaser.Physics.Arcade.Sprite {
         this.rcsFuel = Math.max(0, this.rcsFuel - HAULER_RCS_DRAIN_MANEUVER * dt)
         break
       case 'deploying-miner':
+      case 'scanning':
       case 'waiting-at-asteroid':
       case 'collecting-nets':
       case 'resupplying-miner':
@@ -216,6 +296,7 @@ export class Ship extends Phaser.Physics.Arcade.Sprite {
         this.setVelocity(0, 0)
         break
       case 'idle':
+        this.setVelocity(0, 0)
         break
     }
   }
@@ -265,13 +346,14 @@ export class Ship extends Phaser.Physics.Arcade.Sprite {
     this.heading = Phaser.Math.Angle.WrapDegrees(
       this.heading + Phaser.Math.Clamp(diff, -maxTurn, maxTurn)
     )
-    this.setAngle(this.heading)
+    this.setAngle(this.heading + this.artAngleOffset)
     this.scene.physics.velocityFromAngle(this.heading, SHIP_SPEED * this.speedMultiplier, this.body!.velocity)
   }
 
   private arriveIdle(): void {
     this.shipState = 'idle'
     this.target = null
+    this.isScanJob = false
     this.pushToStore()
   }
 
@@ -285,8 +367,11 @@ export class Ship extends Phaser.Physics.Arcade.Sprite {
   departForBase(slotTarget?: { x: number; y: number }): void {
     this.collectSlotProgress.clear()
     this.shipState = 'traveling-to-base'
-    this.target = slotTarget ? { ...slotTarget } : { ...this.basePosition }
+    // Fall back to the live base position (the base orbits); the scene also
+    // re-targets in-flight ships each frame to track the moving slot/base.
+    this.target = slotTarget ? { ...slotTarget } : { x: this.base.x, y: this.base.y }
     this.asteroidTarget = null
+    this.isScanJob = false
     this.waitOrbitalAngle = null
     this.minerTarget = null
     this.pushToStore()
@@ -365,7 +450,9 @@ export class Ship extends Phaser.Physics.Arcade.Sprite {
       this.progressBarGfx.fillRect(barX, barY, UNLOAD_BAR_WIDTH * fill, UNLOAD_BAR_HEIGHT)
     }
 
-    if (!this.base.canAcceptCargo(this.cargoContents)) return
+    // Silo soft-caps: in-flight cargo always unloads (never stranded), even if it
+    // pushes the silo transiently over capacity. Back-pressure is applied upstream
+    // by halting new acquisition (auto-designate) once the silo is full.
 
     // Advance attachment timer — one item drains per ATTACHMENT_UNLOAD_DURATION.
     // The scene drains an item on each tick and re-arms via armNextAttachUnload.
@@ -419,7 +506,109 @@ export class Ship extends Phaser.Physics.Arcade.Sprite {
       this.slotGfx.destroy()
       this.slotGfx = null
     }
+    if (this.exhaustPlume !== null) {
+      this.exhaustPlume.destroy()
+      this.exhaustPlume = null
+    }
+    if (this.exhaustEmitter !== null) {
+      this.exhaustEmitter.destroy()
+      this.exhaustEmitter = null
+    }
+    if (this.rcsEmitter !== null) {
+      this.rcsEmitter.destroy()
+      this.rcsEmitter = null
+    }
     super.destroy(fromScene)
+  }
+
+  private ensureEmitters(): void {
+    if (this.exhaustPlume !== null || this.exhaustEmitter !== null) return
+    if (!this.scene.textures.exists(PARTICLE_TEXTURE_KEY)) return
+    if (this.scene.textures.exists(FLAME_TEXTURE_KEY)) {
+      // Generated flame as a stretched additive billboard: a directional jet straight out the
+      // back (not a radial puff). Origin near the hot end so it attaches at the nozzle.
+      this.exhaustPlume = this.scene.add
+        .image(0, 0, FLAME_TEXTURE_KEY)
+        .setBlendMode(Phaser.BlendModes.ADD)
+        .setOrigin(0.5, 0.15)
+        .setVisible(false)
+        .setDepth(this.depth - 1)
+    } else {
+      // Fallback: the procedural soft-dot exhaust (tinted) when the flame sprite is absent.
+      this.exhaustEmitter = this.scene.add.particles(0, 0, PARTICLE_TEXTURE_KEY, {
+        lifespan: 420,
+        speed: { min: 30, max: 70 },
+        scale: { start: 0.55, end: 0 },
+        alpha: { start: 0.85, end: 0 },
+        tint: [0xffffff, 0xffd27f, 0xff8a3c],
+        blendMode: 'ADD',
+        frequency: 28,
+        quantity: 1,
+        emitting: false,
+      })
+      this.exhaustEmitter.setDepth(this.depth - 1)
+    }
+    this.rcsEmitter = this.scene.add.particles(0, 0, PARTICLE_TEXTURE_KEY, {
+      lifespan: 260,
+      speed: { min: 10, max: 30 },
+      scale: { start: 0.3, end: 0 },
+      alpha: { start: 0.7, end: 0 },
+      tint: [0xcfe8ff, 0xffffff],
+      blendMode: 'ADD',
+      emitting: false,
+    })
+    this.rcsEmitter.setDepth(this.depth - 1)
+  }
+
+  /**
+   * Drive thruster exhaust and RCS-puff particles from the current motion state.
+   * Called each frame by the scene after updateSteering. Exhaust streams behind
+   * the hull while in transit; RCS fires intermittent flank puffs while
+   * maneuvering (holding station on RCS).
+   */
+  updateThrusters(dt: number): void {
+    this.ensureEmitters()
+    if (this.rcsEmitter === null) return
+
+    const rad = Phaser.Math.DegToRad(this.heading)
+
+    // Continuous exhaust plume behind the hull while thrusting.
+    if (this.inTransit()) {
+      const rearX = this.x - Math.cos(rad) * EXHAUST_OFFSET
+      const rearY = this.y - Math.sin(rad) * EXHAUST_OFFSET
+      if (this.exhaustPlume !== null) {
+        // Directional billboard: local +Y points along (heading+180), i.e. straight out the back;
+        // flicker the length a little for life.
+        const flick = 0.8 + Math.random() * 0.35
+        this.exhaustPlume.setPosition(rearX, rearY)
+        this.exhaustPlume.setAngle(this.heading + 90)
+        this.exhaustPlume.setDisplaySize(PLUME_WIDTH, PLUME_LENGTH * flick)
+        this.exhaustPlume.setAlpha(0.8 + Math.random() * 0.2)
+        this.exhaustPlume.setVisible(true)
+      } else if (this.exhaustEmitter !== null) {
+        this.exhaustEmitter.setPosition(rearX, rearY)
+        const back = this.heading + 180
+        this.exhaustEmitter.setEmitterAngle({ min: back - EXHAUST_SPREAD, max: back + EXHAUST_SPREAD })
+        this.exhaustEmitter.emitting = true
+      }
+    } else {
+      if (this.exhaustPlume !== null) this.exhaustPlume.setVisible(false)
+      if (this.exhaustEmitter !== null) this.exhaustEmitter.emitting = false
+    }
+
+    // Intermittent RCS puffs from a flank while maneuvering on RCS.
+    if (this.inManeuver()) {
+      this.rcsPuffCooldown -= dt
+      if (this.rcsPuffCooldown <= 0) {
+        this.rcsPuffCooldown = RCS_PUFF_INTERVAL
+        const side = Math.random() < 0.5 ? 1 : -1
+        const px = this.x + Math.cos(rad + Math.PI / 2) * RCS_FLANK_OFFSET * side
+        const py = this.y + Math.sin(rad + Math.PI / 2) * RCS_FLANK_OFFSET * side
+        this.rcsEmitter.explode(Phaser.Math.Between(1, 3), px, py)
+      }
+    } else {
+      this.rcsPuffCooldown = 0
+    }
   }
 
   drawSlotIndicators(): void {

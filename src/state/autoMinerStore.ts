@@ -10,7 +10,6 @@ export interface SelectedAutoMinerData {
   spareNetCount: number
   tetheredNetCount: number
   battery: number
-  rcsFuel: number
   beaconReason: BeaconReason
 }
 

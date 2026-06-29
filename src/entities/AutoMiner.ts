@@ -2,6 +2,7 @@ import Phaser from 'phaser'
 import { nanoid } from 'nanoid'
 import { selectedAutoMiner } from '../state/autoMinerStore'
 import type { ResourceType } from '../world/worldConfig'
+import type { Composition } from '../world/composition'
 import type { Asteroid } from './Asteroid'
 import { CargoNet } from './CargoNet'
 
@@ -48,8 +49,6 @@ export const MINER_REPAIR_DURATION_MS = 5000
 export const MINER_BATTERY_MAX = 200
 export const MINER_BATTERY_DRAIN_MINING = 2
 export const MINER_BATTERY_DRAIN_BEACONING = 0.05
-export const MINER_RCS_MAX = 50
-export const MINER_RCS_DRAIN_PER_ATTACH = 10
 // Battery fraction at which a mining miner starts beaconing for recovery while
 // still working, and the lower fraction at which it stops mining to preserve
 // reserve battery for the beacon.
@@ -110,13 +109,14 @@ export class AutoMiner extends Phaser.GameObjects.Image {
   asteroidId: string | null
   spareNetCount: number
   activeNetFill: number
+  activeResourceType: ResourceType | null = null // dominant of the in-progress active net
+  activeComposition: Composition | null = null   // ore composition of the in-progress active net
   tetheredNetIds: string[]
   readonly technologyLevel: number
   isSelected: boolean
   freeOrbitalRadius: number | null = null
   freeOrbitalAngle: number | null = null
   battery: number
-  rcsFuel: number
   beaconReason: BeaconReason = null
   private beaconTimer: Phaser.Time.TimerEvent | null = null
 
@@ -131,7 +131,6 @@ export class AutoMiner extends Phaser.GameObjects.Image {
     this.tetheredNetIds = []
     this.technologyLevel = 1
     this.battery = MINER_BATTERY_MAX
-    this.rcsFuel = MINER_RCS_MAX
     this.isSelected = false
 
     scene.add.existing(this)
@@ -170,6 +169,8 @@ export class AutoMiner extends Phaser.GameObjects.Image {
     const extracted = Math.min(effectiveRate * dt, asteroid.currentQuantity)
     asteroid.currentQuantity -= extracted
     this.activeNetFill += extracted
+    this.activeResourceType = asteroid.resourceType
+    this.activeComposition = asteroid.composition
     asteroid.pushToStore()
 
     if (asteroid.currentQuantity <= 0) {
@@ -181,14 +182,14 @@ export class AutoMiner extends Phaser.GameObjects.Image {
     }
 
     if (this.activeNetFill >= NET_CAPACITY) {
-      this.ejectNet(asteroid.resourceType)
+      this.ejectNet(asteroid.composition)
     }
   }
 
-  private ejectNet(resourceType: ResourceType): void {
+  private ejectNet(composition: Composition): void {
     this.state = 'ejecting-net'
 
-    const net = new CargoNet(this.scene, resourceType, this.activeNetFill, this.asteroidId)
+    const net = new CargoNet(this.scene, composition, this.activeNetFill, this.asteroidId)
     net.setPosition(this.x + 10, this.y - 10)
     this.tetheredNetIds = [...this.tetheredNetIds, net.id]
     this.activeNetFill = 0
@@ -203,6 +204,22 @@ export class AutoMiner extends Phaser.GameObjects.Image {
       this.state = 'net-starved'
     }
 
+    this.pushToStore()
+  }
+
+  /**
+   * Ejects the partial (not-yet-full) active net for transport when the miner is
+   * recovered, so its accumulated resources are not stranded. Creates a
+   * full-tethered CargoNet the recovery flow then collects (or orphans, never
+   * loses). No-op if there is no fill or the resource type is unknown.
+   */
+  ejectActiveNet(): void {
+    if (this.activeNetFill <= 0 || this.activeComposition === null) return
+    const net = new CargoNet(this.scene, this.activeComposition, this.activeNetFill, this.asteroidId)
+    net.setPosition(this.x + 10, this.y - 10)
+    this.tetheredNetIds = [...this.tetheredNetIds, net.id]
+    this.activeNetFill = 0
+    this.emit('net-ejected', net)
     this.pushToStore()
   }
 
@@ -277,7 +294,6 @@ export class AutoMiner extends Phaser.GameObjects.Image {
       spareNetCount: this.spareNetCount,
       tetheredNetCount: this.tetheredNetIds.length,
       battery: this.battery,
-      rcsFuel: this.rcsFuel,
       beaconReason: this.beaconReason,
     })
   }

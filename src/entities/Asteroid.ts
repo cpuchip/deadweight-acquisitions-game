@@ -1,8 +1,22 @@
 import Phaser from 'phaser'
 import { SIZE_CONFIGS, ASTEROID_TEXTURE_SIZE, ORBITAL_K, type ResourceType, type SizeCategory } from '../world/worldConfig'
+import type { Composition } from '../world/composition'
 import type { AsteroidData } from '../world/worldGenerator'
 import { selectedAsteroid } from '../state/shipStore'
 import { get } from 'svelte/store'
+
+// Generated per-resource asteroid atlas (asset-harness). Frames are named by resource type
+// ('iron'|'ice'|'silicates'|'rare-metals', plus 'unknown' for scan-gated large asteroids).
+export const ASTEROID_ATLAS_KEY = 'dwa_asteroids'
+
+// Large (high-yield) asteroids start unknown until scanned — they reveal the generic 'unknown'
+// frame (and hide type/quantity/composition in the panel) until a scan completes (WI 586).
+function isUnknownData(data: AsteroidData): boolean {
+  return data.sizeCategory === 'large' && !data.scanned
+}
+function asteroidFrame(data: AsteroidData): string {
+  return isUnknownData(data) ? 'unknown' : data.resourceType
+}
 
 const COMPANY_RING_RADIUS = ASTEROID_TEXTURE_SIZE * 1.2  // slightly larger than the largest visual
 const COMPANY_RING_COLOR = 0x44ffdd
@@ -13,6 +27,8 @@ const DEPLETION_SCALE_MIN = 0.2
 export class Asteroid extends Phaser.GameObjects.Image {
   readonly id: string
   readonly resourceType: ResourceType
+  readonly composition: Composition
+  scanned: boolean
   currentQuantity: number
   readonly maxQuantity: number
   readonly sizeCategory: SizeCategory
@@ -23,16 +39,25 @@ export class Asteroid extends Phaser.GameObjects.Image {
   private companyRing: Phaser.GameObjects.Graphics | null = null
 
   constructor(scene: Phaser.Scene, data: AsteroidData) {
-    super(scene, 0, 0, `asteroid-${data.resourceType}`)
+    super(
+      scene, 0, 0,
+      scene.textures.exists(ASTEROID_ATLAS_KEY) ? ASTEROID_ATLAS_KEY : `asteroid-${data.resourceType}`,
+      scene.textures.exists(ASTEROID_ATLAS_KEY) ? asteroidFrame(data) : undefined,
+    )
     this.id = data.id
     this.resourceType = data.resourceType
+    this.composition = data.composition
+    this.scanned = data.scanned
     this.currentQuantity = data.currentQuantity
     this.maxQuantity = data.maxQuantity
     this.sizeCategory = data.sizeCategory
     this.isCompany = data.isCompany
     this.orbitalRadius = data.orbitalRadius
     this.orbitalAngle = data.orbitalAngle
-    this.baseScale = SIZE_CONFIGS[data.sizeCategory].scale
+    // Fold a (32px → frame) art factor in so the generated sprite renders at the same
+    // on-screen size as the old procedural 32px circle (factor = 1 for the fallback).
+    const artFactor = ASTEROID_TEXTURE_SIZE / Math.max(this.width, this.height)
+    this.baseScale = SIZE_CONFIGS[data.sizeCategory].scale * artFactor
     const depletionRatio = data.maxQuantity > 0 ? data.currentQuantity / data.maxQuantity : 1
     this.setScale(this.baseScale * Math.max(DEPLETION_SCALE_MIN, depletionRatio))
     this.x = Math.cos(this.orbitalAngle) * this.orbitalRadius
@@ -56,6 +81,18 @@ export class Asteroid extends Phaser.GameObjects.Image {
     }
   }
 
+  /** A large (high-yield) asteroid whose contents are hidden until scanned. */
+  isUnknown(): boolean {
+    return this.sizeCategory === 'large' && !this.scanned
+  }
+
+  /** Scan complete: mark known and reveal the resource sprite (no-op art in fallback mode). */
+  reveal(): void {
+    this.scanned = true
+    if (this.scene.textures.exists(ASTEROID_ATLAS_KEY)) this.setFrame(this.resourceType)
+    this.pushToStore()
+  }
+
   updateOrbit(dt: number): void {
     this.orbitalAngle += (ORBITAL_K / Math.max(this.orbitalRadius, 1) ** 1.5) * dt
     this.x = Math.cos(this.orbitalAngle) * this.orbitalRadius
@@ -76,6 +113,8 @@ export class Asteroid extends Phaser.GameObjects.Image {
     selectedAsteroid.set({
       id: this.id,
       resourceType: this.resourceType,
+      composition: this.composition,
+      scanned: this.scanned,
       currentQuantity: this.currentQuantity,
       maxQuantity: this.maxQuantity,
       sizeCategory: this.sizeCategory,
@@ -86,6 +125,8 @@ export class Asteroid extends Phaser.GameObjects.Image {
     selectedAsteroid.set({
       id: this.id,
       resourceType: this.resourceType,
+      composition: this.composition,
+      scanned: this.scanned,
       currentQuantity: this.currentQuantity,
       maxQuantity: this.maxQuantity,
       sizeCategory: this.sizeCategory,

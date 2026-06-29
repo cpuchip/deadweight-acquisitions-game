@@ -1,5 +1,6 @@
 import Phaser from 'phaser'
-import { shipHasFreeMediumSlot, selectDispatchTarget, selectHaulerForDesignation } from './dispatchLogic'
+import { shipHasFreeMediumSlot, selectDispatchTarget, selectHaulerForDesignation, selectScanHauler } from './dispatchLogic'
+import { designationsToRevert, chooseDock, shouldReleaseWaitingHauler, planNetCollection } from './simLogic'
 import type { AttachmentPayload } from '../state/attachmentTypes'
 import { nanoid } from 'nanoid'
 import { get } from 'svelte/store'
@@ -20,11 +21,12 @@ import {
   type ResourceType,
 } from '../world/worldConfig'
 import { Asteroid } from '../entities/Asteroid'
-import { Base, generateBaseTexture } from '../entities/Base'
+import { Base, generateBaseTexture, BASE_STORAGE_CAPACITY, ORE_SILO_CAPACITY } from '../entities/Base'
 import { Planet, generatePlanetTexture } from '../entities/Planet'
 import {
   Ship,
   generateShipTexture,
+  generateParticleTexture,
   DRAG_ORDER_THRESHOLD,
   CARGO_CAPACITY_TIERS,
   CARGO_UPGRADE_COSTS,
@@ -57,8 +59,6 @@ import {
   MINER_REPAIR_DURATION_MS,
   MINER_BATTERY_MAX,
   MINER_BATTERY_DRAIN_BEACONING,
-  MINER_RCS_MAX,
-  MINER_RCS_DRAIN_PER_ATTACH,
   conditionPenaltyFraction,
   type AutoMinerState,
 } from '../entities/AutoMiner'
@@ -86,6 +86,27 @@ import {
 } from '../state/autoMinerStore'
 import { GameSaveService } from '../services/GameSaveService'
 import { getPrice } from '../world/pricingSeam'
+import { flybyScale, asteroidProximityRadius } from '../world/movement'
+import { effectivePrice } from '../world/infrastructure'
+import { infrastructure } from '../state/infrastructureStore'
+import type { LeverKey } from '../entities/Base'
+import { createRng } from '../world/rng'
+import {
+  type MarketEvent, rollEvent, nextInterval, isExpired, combinedMultiplier,
+} from '../world/marketEvents'
+import { activeMarketEvents } from '../state/marketEventStore'
+import { currentPrice } from '../world/market'
+import { pushBounded } from '../world/history'
+import { priceHistory, type PriceSample } from '../state/metricsStore'
+import { checkEconomy } from '../world/economyInvariants'
+import { checkIndustry } from '../world/industryInvariants'
+import { logInvariant } from '../state/invariantStore'
+import { separate, PROCESSING_RATE } from '../world/processing'
+import { oreSilo } from '../state/oreSiloStore'
+
+const METRICS_SAMPLE_INTERVAL = 1
+const METRICS_MAX_SAMPLES = 180
+const SCAN_DURATION_MS = 3000 // time a scanner-hauler holds at an asteroid to reveal its composition
 
 const NOTIFICATION_DURATION_MS = 4000
 const WORLD_SIZE = 8500
@@ -108,8 +129,12 @@ const SELECTION_RING_ALPHA = 0.8
 
 const PROXIMITY_PLANET_RADIUS = 600
 const PROXIMITY_BASE_RADIUS = 250
-const PROXIMITY_ASTEROID_RADIUS = 120
+const PROXIMITY_ASTEROID_RADIUS = 120  // base radius; scaled per-asteroid by size category
 const PROXIMITY_MIN_SPEED = 0.25
+// Fly-by "looming": a hauler scales up to this multiple of its spawn size at full slowdown.
+const SHIP_FLYBY_MAX_SCALE = 1.5
+// Auto-follow camera smoothing (0..1): gentle glide to the followed entity, not an instant snap.
+const FOLLOW_LERP = 0.12
 
 const MINIMAP_SIZE = 180
 const MINIMAP_MARGIN = 10
@@ -166,13 +191,31 @@ export class SpaceScene extends Phaser.Scene {
   private minZoom = 0.1
   private gameClock = 0
   private autoSaveAccumulator = 0
+  private marketPushAccumulator = 0
+  private marketEvents: MarketEvent[] = []
+  private nextEventAt = 0
+  private eventSeed = 0
+  private metricsSampleAccumulator = 0
+  private shipScanStart = new Map<string, number>()
+  private priceSeries: Record<ResourceType, PriceSample[]> = {
+    iron: [], ice: [], silicates: [], 'rare-metals': [],
+  }
   private companyArrivalAccumulator = 0
   private followCam = false
+  private followTarget: (Phaser.GameObjects.GameObject & { x: number; y: number }) | null = null
   private minimap!: Phaser.GameObjects.Graphics
-  private slotPositions: SlotPosition[] = []
+  // Service-slot / hangar geometry stored as offsets from the base center; live
+  // positions = base position + offset (the base orbits, so these are dynamic).
+  private slotOffsets: SlotPosition[] = []
   private slotOccupants: Array<string | null> = []
-  private hangarPositions: HangarPosition[] = []
+  private hangarOffsets: HangarPosition[] = []
   private hangarOccupants: Array<string | null> = []
+  private slotMarkerGfx: Phaser.GameObjects.Graphics | null = null
+  private hangarMarkerGfx: Phaser.GameObjects.Graphics | null = null
+  private baseLabel: Phaser.GameObjects.Text | null = null
+  // Ships parked/holding at the base keep a fixed offset from it so they orbit with
+  // the base (idle haulers, and slot-less haulers waiting to unload).
+  private shipParkOffsets: Map<string, { dx: number; dy: number }> = new Map()
   private shipPendingUpgrades: Map<string, 'cargo'> = new Map()
   private shipPendingDesignationAsteroid: Map<string, string> = new Map()
   private designations: MiningDesignation[] = []
@@ -190,6 +233,7 @@ export class SpaceScene extends Phaser.Scene {
     this.buildStarLayers()
     this.generateAsteroidTextures()
     generateShipTexture(this)
+    generateParticleTexture(this)
     generateBaseTexture(this)
     generatePlanetTexture(this)
     generateAutoMinerTexture(this)
@@ -204,6 +248,9 @@ export class SpaceScene extends Phaser.Scene {
       this.spawnBase()
       this.spawnWorld()
       this.spawnStarterShip()
+      this.eventSeed = gameState.worldSeed >>> 0
+      this.advanceSchedule(false) // schedule the first market event
+      this.pushOreSiloStore(false)
     }
 
     this.minimap = this.add.graphics()
@@ -243,6 +290,25 @@ export class SpaceScene extends Phaser.Scene {
     // Restore base
     this.base = new Base(this, BASE_X, BASE_Y)
     this.base.storage = { ...save.base.storage }
+    this.base.storageCapacity = save.base.storageCapacity ?? BASE_STORAGE_CAPACITY
+    for (const type of ['iron', 'ice', 'silicates', 'rare-metals'] as ResourceType[]) {
+      this.base.markets[type].pressure = save.base.marketPressure?.[type] ?? 0
+    }
+    this.base.pushMarketToStore()
+    this.base.solarCapacity = save.base.solarCapacity ?? 0
+    this.base.propellantCapacity = save.base.propellantCapacity ?? 0
+    this.base.foundryCapacity = save.base.foundryCapacity ?? 0
+    this.base.oreQuantity = save.base.oreQuantity ?? 0
+    this.base.oreComposition = save.base.oreComposition ?? { iron: 0, ice: 0, silicates: 0, 'rare-metals': 0 }
+    this.base.oreSiloCapacity = save.base.oreSiloCapacity ?? ORE_SILO_CAPACITY
+    this.pushOreSiloStore(false)
+    // Restore market-event schedule (legacy/unscheduled saves get a fresh schedule).
+    const me = save.marketEvents
+    this.marketEvents = me?.active ? [...me.active] : []
+    this.eventSeed = me?.seed ?? (save.worldSeed >>> 0)
+    this.nextEventAt = me?.nextEventAt ?? 0
+    if (this.nextEventAt === 0) this.advanceSchedule(false)
+    activeMarketEvents.set([...this.marketEvents])
     this.base.credits = save.base.credits
     this.base.ownedDockCount = save.base.ownedDockCount ?? 0
     this.base.ownedHangarCount = save.base.ownedHangarCount ?? 0
@@ -250,10 +316,13 @@ export class SpaceScene extends Phaser.Scene {
     this.base.stationMinerSlotCount = save.base.stationMinerSlotCount ?? 0
     this.base.stationMinerIds = [...(save.base.stationMinerIds ?? [])]
     this.base.autoDesignate = save.base.autoDesignate ?? false
+    this.base.scannerCount = save.base.scannerCount ?? 0
+    if (save.base.orbitalAngle !== undefined) this.base.orbitalAngle = save.base.orbitalAngle
+    this.base.advanceOrbit(0) // reposition to the restored orbital angle
     this.base.pushToStore()
 
-    this.add
-      .text(BASE_X, BASE_Y + 40, 'BASE', {
+    this.baseLabel = this.add
+      .text(this.base.x, this.base.y + 40, 'BASE', {
         color: '#88ccff',
         fontSize: '12px',
         fontFamily: 'monospace',
@@ -261,6 +330,7 @@ export class SpaceScene extends Phaser.Scene {
       .setOrigin(0.5, 0)
     this.initSlots()
     this.initHangars()
+    this.updateBaseAttachments()
 
     // Restore AutoMiners
     for (const snap of save.autoMiners) {
@@ -268,8 +338,9 @@ export class SpaceScene extends Phaser.Scene {
       miner.state = snap.state
       miner.condition = snap.condition ?? 1
       miner.battery = snap.battery ?? MINER_BATTERY_MAX
-      miner.rcsFuel = snap.rcsFuel ?? MINER_RCS_MAX
       miner.beaconReason = snap.beaconReason ?? null
+      miner.activeResourceType = snap.activeResourceType ?? null
+      miner.activeComposition = snap.activeComposition ?? null
       miner.asteroidId = snap.asteroidId
       miner.spareNetCount = snap.spareNetCount
       miner.activeNetFill = snap.activeNetFill
@@ -304,7 +375,7 @@ export class SpaceScene extends Phaser.Scene {
     for (const snap of save.cargoNets) {
       const net = new CargoNet(
         this,
-        snap.resourceType as import('../world/worldConfig').ResourceType,
+        snap.composition,
         snap.quantity,
         snap.asteroidId,
         snap.id,
@@ -368,6 +439,7 @@ export class SpaceScene extends Phaser.Scene {
       ship.rcsFuel = snap.rcsFuel ?? HAULER_RCS_MAX
       ship.battery = snap.battery ?? HAULER_BATTERY_MAX
       ship.chargeToggle = snap.chargeToggle ?? false
+      ship.isScanJob = snap.isScanJob ?? false
       ship.cargoUpgradeLevel = snap.cargoUpgradeLevel
       ship.cargoCapacity = CARGO_CAPACITY_TIERS[snap.cargoUpgradeLevel]
       ship.attachmentPoints = snap.attachmentPoints
@@ -378,11 +450,12 @@ export class SpaceScene extends Phaser.Scene {
       }
       ship.waitOrbitalAngle = snap.waitOrbitalAngle
 
-      // Restore dock slot assignment
+      // Restore dock slot assignment (public docks don't reserve occupancy)
       const savedSlot = snap.dockSlotIndex ?? null
+      ship.dockIsPublic = snap.dockIsPublic ?? false
       if (savedSlot !== null && savedSlot >= 0 && savedSlot < this.slotOccupants.length) {
         ship.dockSlotIndex = savedSlot
-        this.slotOccupants[savedSlot] = ship.id
+        if (!ship.dockIsPublic) this.slotOccupants[savedSlot] = ship.id
       }
 
       // Restore hangar slot assignment
@@ -459,8 +532,8 @@ export class SpaceScene extends Phaser.Scene {
         if (this.base.storeAutoMiner(miner.id)) {
           miner.state = 'station-stored'
         } else {
-          miner.freeOrbitalRadius = BASE_Y
-          miner.freeOrbitalAngle = Math.atan2(BASE_Y, BASE_X) + 0.15
+          miner.freeOrbitalRadius = this.base.orbitalRadius
+          miner.freeOrbitalAngle = this.base.orbitalAngle + 0.15
           miner.setPosition(
             Math.cos(miner.freeOrbitalAngle) * miner.freeOrbitalRadius,
             Math.sin(miner.freeOrbitalAngle) * miner.freeOrbitalRadius - 20,
@@ -498,11 +571,24 @@ export class SpaceScene extends Phaser.Scene {
 
   private buildSaveState(): SaveState {
     return {
-      schemaVersion: 21,
+      schemaVersion: 28,
       worldSeed: gameState.worldSeed,
       gameClock: this.gameClock,
       base: {
         storage: { ...this.base.storage },
+        storageCapacity: this.base.storageCapacity,
+        marketPressure: {
+          iron:          this.base.markets.iron.pressure,
+          ice:           this.base.markets.ice.pressure,
+          silicates:     this.base.markets.silicates.pressure,
+          'rare-metals': this.base.markets['rare-metals'].pressure,
+        },
+        solarCapacity: this.base.solarCapacity,
+        propellantCapacity: this.base.propellantCapacity,
+        foundryCapacity: this.base.foundryCapacity,
+        oreQuantity: this.base.oreQuantity,
+        oreComposition: this.base.oreComposition,
+        oreSiloCapacity: this.base.oreSiloCapacity,
         credits: this.base.credits,
         ownedDockCount: this.base.ownedDockCount,
         ownedHangarCount: this.base.ownedHangarCount,
@@ -510,6 +596,8 @@ export class SpaceScene extends Phaser.Scene {
         stationMinerSlotCount: this.base.stationMinerSlotCount,
         stationMinerIds: [...this.base.stationMinerIds],
         autoDesignate: this.base.autoDesignate,
+        scannerCount: this.base.scannerCount,
+        orbitalAngle: this.base.orbitalAngle,
       },
       asteroids: this.asteroids.map(a => ({
         id: a.id,
@@ -518,6 +606,8 @@ export class SpaceScene extends Phaser.Scene {
         orbitalRadius: a.orbitalRadius,
         orbitalAngle: a.orbitalAngle,
         resourceType: a.resourceType,
+        composition: a.composition,
+        scanned: a.scanned,
         sizeCategory: a.sizeCategory,
         currentQuantity: a.currentQuantity,
         maxQuantity: a.maxQuantity,
@@ -540,12 +630,14 @@ export class SpaceScene extends Phaser.Scene {
         attachUnloadTimer: s.attachUnloadTimer,
         waitOrbitalAngle: s.waitOrbitalAngle,
         dockSlotIndex: s.dockSlotIndex,
+        dockIsPublic: s.dockIsPublic,
         hangarSlotIndex: s.hangarSlotIndex,
         hangarServiceTimer: s.hangarServiceTimer,
         thrusterFuel: s.thrusterFuel,
         rcsFuel: s.rcsFuel,
         battery: s.battery,
         chargeToggle: s.chargeToggle,
+        isScanJob: s.isScanJob,
       })),
       autoMiners: this.autoMiners.map(m => ({
         id: m.id,
@@ -559,8 +651,9 @@ export class SpaceScene extends Phaser.Scene {
         activeNetFill: m.activeNetFill,
         tetheredNetIds: [...m.tetheredNetIds],
         battery: m.battery,
-        rcsFuel: m.rcsFuel,
         beaconReason: m.beaconReason,
+        activeResourceType: m.activeResourceType,
+        activeComposition: m.activeComposition,
       })),
       cargoNets: this.cargoNets
         .filter(n => n.state === 'full-tethered')
@@ -568,6 +661,7 @@ export class SpaceScene extends Phaser.Scene {
           id: n.id,
           state: n.state,
           resourceType: n.resourceType,
+          composition: n.composition,
           quantity: n.quantity,
           asteroidId: n.asteroidId,
           freeOrbitalRadius: n.freeOrbitalRadius,
@@ -577,9 +671,11 @@ export class SpaceScene extends Phaser.Scene {
       designations: this.designations.map(d => ({
         id: d.id,
         asteroidId: d.asteroidId,
+        kind: d.kind,
         status: d.status,
         claimedByShipId: d.claimedByShipId,
       })),
+      marketEvents: { active: [...this.marketEvents], nextEventAt: this.nextEventAt, seed: this.eventSeed },
     }
   }
 
@@ -615,8 +711,8 @@ export class SpaceScene extends Phaser.Scene {
 
   private spawnBase(): void {
     this.base = new Base(this, BASE_X, BASE_Y)
-    this.add
-      .text(BASE_X, BASE_Y + 40, 'BASE', {
+    this.baseLabel = this.add
+      .text(this.base.x, this.base.y + 40, 'BASE', {
         color: '#88ccff',
         fontSize: '12px',
         fontFamily: 'monospace',
@@ -624,39 +720,106 @@ export class SpaceScene extends Phaser.Scene {
       .setOrigin(0.5, 0)
     this.initSlots()
     this.initHangars()
+    this.updateBaseAttachments()
   }
 
   private initSlots(): void {
-    this.slotPositions = computeServiceSlots(BASE_X, BASE_Y)
+    // Offsets from base center (recomputed against (0,0)); live positions add base.
+    this.slotOffsets = computeServiceSlots(0, 0)
     this.slotOccupants = Array(SERVICE_SLOT_COUNT).fill(null)
-    const gfx = this.add.graphics()
-    gfx.lineStyle(1, 0x88ccff, 0.25)
-    for (const slot of this.slotPositions) {
-      gfx.strokeCircle(slot.x, slot.y, 8)
-    }
+    this.slotMarkerGfx = this.add.graphics()
   }
 
   private initHangars(): void {
-    this.hangarPositions = computeHangarBays(BASE_X, BASE_Y)
+    this.hangarOffsets = computeHangarBays(0, 0)
     this.hangarOccupants = Array(HANGAR_BAY_COUNT).fill(null)
-    const gfx = this.add.graphics()
-    gfx.lineStyle(1, 0xffaa44, 0.30)
-    for (const bay of this.hangarPositions) {
-      gfx.strokeCircle(bay.x, bay.y, 12)
+    this.hangarMarkerGfx = this.add.graphics()
+  }
+
+  /** Live world position of dock slot `idx` (base position + offset). */
+  private dockSlotPos(idx: number): { x: number; y: number } {
+    return { x: this.base.x + this.slotOffsets[idx].x, y: this.base.y + this.slotOffsets[idx].y }
+  }
+
+  /** Live world position of hangar bay `idx` (base position + offset). */
+  private hangarBayPos(idx: number): { x: number; y: number } {
+    return { x: this.base.x + this.hangarOffsets[idx].x, y: this.base.y + this.hangarOffsets[idx].y }
+  }
+
+  /** Repositions the base label, slot/hangar markers, and docked/serviced ships to
+   *  follow the (orbiting) base. Called each frame after the base advances. */
+  private updateBaseAttachments(): void {
+    if (this.baseLabel) this.baseLabel.setPosition(this.base.x, this.base.y + 40)
+
+    if (this.slotMarkerGfx) {
+      this.slotMarkerGfx.clear()
+      this.slotMarkerGfx.lineStyle(1, 0x88ccff, 0.25)
+      for (let i = 0; i < this.slotOffsets.length; i++) {
+        const p = this.dockSlotPos(i)
+        this.slotMarkerGfx.strokeCircle(p.x, p.y, 8)
+      }
+    }
+    if (this.hangarMarkerGfx) {
+      this.hangarMarkerGfx.clear()
+      this.hangarMarkerGfx.lineStyle(1, 0xffaa44, 0.30)
+      for (let i = 0; i < this.hangarOffsets.length; i++) {
+        const p = this.hangarBayPos(i)
+        this.hangarMarkerGfx.strokeCircle(p.x, p.y, 12)
+      }
+    }
+
+    // Keep ships glued to / aimed at their (moving) service slot or hangar bay.
+    for (const ship of this.ships) {
+      if (ship.dockSlotIndex !== null) {
+        const pos = this.dockSlotPos(ship.dockSlotIndex)
+        if (ship.shipState === 'unloading') ship.setPosition(pos.x, pos.y)
+        else if (ship.shipState === 'traveling-to-base') ship.target = pos
+      }
+      if (ship.hangarSlotIndex !== null) {
+        const pos = this.hangarBayPos(ship.hangarSlotIndex)
+        if (ship.shipState === 'in-hangar' || ship.shipState === 'entering-hangar') ship.setPosition(pos.x, pos.y)
+        else if (ship.shipState === 'traveling-to-hangar') ship.target = pos
+      }
+      if (ship.shipState === 'traveling-to-base' && ship.dockSlotIndex === null) {
+        ship.target = { x: this.base.x, y: this.base.y }
+      }
+      if (ship.shipState === 'fetching-station-miner') {
+        ship.target = { x: this.base.x, y: this.base.y }
+      }
+
+      // Station-keeping: idle haulers near the base, and slot-less haulers holding
+      // to unload, keep a fixed offset from the base so they orbit with it.
+      const stationKeep =
+        (ship.shipState === 'idle' &&
+          Phaser.Math.Distance.Between(ship.x, ship.y, this.base.x, this.base.y) <= PROXIMITY_BASE_RADIUS) ||
+        (ship.shipState === 'unloading' && ship.dockSlotIndex === null)
+      if (stationKeep) {
+        let off = this.shipParkOffsets.get(ship.id)
+        if (!off) {
+          off = { dx: ship.x - this.base.x, dy: ship.y - this.base.y }
+          this.shipParkOffsets.set(ship.id, off)
+        }
+        ship.setPosition(this.base.x + off.dx, this.base.y + off.dy)
+        ship.setVelocity(0, 0)
+      } else {
+        this.shipParkOffsets.delete(ship.id)
+      }
     }
   }
 
   /** Pushes station capacity/usage to the UI store (change-guarded). */
   private pushStationUsage(): void {
-    const docksInUse = this.slotOccupants.filter(o => o !== null).length
-    const publicDocksInUse = this.slotOccupants.filter((o, i) => o !== null && i >= this.base.ownedDockCount).length
+    // Owned docks are occupancy-tracked (first ownedDockCount slots); public docks
+    // are unlimited — count ships currently docked at a public dock.
+    const ownedDocksInUse = this.slotOccupants.slice(0, this.base.ownedDockCount).filter(o => o !== null).length
+    const publicDocksInUse = this.ships.filter(s => s.dockIsPublic && s.dockSlotIndex !== null).length
     const hangarsInUse = this.hangarOccupants.filter(o => o !== null).length
     const publicHangarsInUse = this.hangarOccupants.filter((o, i) => o !== null && i >= this.base.ownedHangarCount).length
     const usage = {
       minersStored: this.base.stationMinerIds.length,
       minerSlots: this.base.stationMinerSlotCount,
-      docksInUse,
-      docksTotal: SERVICE_SLOT_COUNT,
+      ownedDocksInUse,
+      ownedDocksTotal: this.base.ownedDockCount,
       publicDocksInUse,
       hangarsInUse,
       hangarsTotal: HANGAR_BAY_COUNT,
@@ -669,26 +832,35 @@ export class SpaceScene extends Phaser.Scene {
   }
 
   private lastStationUsageKey = ''
+  private debugMode = true // F9 toggles dev invariant checks + entity overlay
+  private debugLabels: Map<string, Phaser.GameObjects.Text> = new Map() // per-entity debug text
 
-  private assignDockSlot(ship: Ship): SlotPosition | null {
-    const idx = this.slotOccupants.findIndex(occ => occ === null)
-    if (idx < 0) return null
-    this.slotOccupants[idx] = ship.id
-    ship.dockSlotIndex = idx
-    return this.slotPositions[idx]
+  // Docks are effectively infinite: a returning hauler always docks — at a free
+  // owned dock (no fee) if available, otherwise a public dock (fee, unlimited,
+  // ships stack on a public dock-ring position). Never returns null.
+  private assignDockSlot(ship: Ship): SlotPosition {
+    const choice = chooseDock(
+      this.base.ownedDockCount,
+      this.slotOccupants.map(o => o !== null),
+      SERVICE_SLOT_COUNT - 1,
+    )
+    ship.dockSlotIndex = choice.index
+    ship.dockIsPublic = choice.isPublic
+    if (!choice.isPublic) this.slotOccupants[choice.index] = ship.id // owned: reserve
+    return this.dockSlotPos(choice.index)
   }
 
   private releaseDockSlot(ship: Ship): void {
     const idx = ship.dockSlotIndex
-    if (idx !== null && idx >= 0 && idx < this.slotOccupants.length) {
+    if (!ship.dockIsPublic && idx !== null && idx >= 0 && idx < this.slotOccupants.length) {
       this.slotOccupants[idx] = null
     }
     ship.dockSlotIndex = null
+    ship.dockIsPublic = false
   }
 
   private departShipForBase(ship: Ship): void {
-    const slot = this.assignDockSlot(ship)
-    ship.departForBase(slot ?? undefined)
+    ship.departForBase(this.assignDockSlot(ship))
   }
 
   private assignHangarSlot(ship: Ship): HangarPosition | null {
@@ -696,7 +868,7 @@ export class SpaceScene extends Phaser.Scene {
     if (idx < 0) return null
     this.hangarOccupants[idx] = ship.id
     ship.hangarSlotIndex = idx
-    return this.hangarPositions[idx]
+    return this.hangarBayPos(idx)
   }
 
   private releaseHangarSlot(ship: Ship): void {
@@ -719,7 +891,7 @@ export class SpaceScene extends Phaser.Scene {
   }
 
   private spawnStarterShip(): void {
-    const ship = new Ship(this, BASE_X, BASE_Y, 'Hauler-01', { x: BASE_X, y: BASE_Y }, this.base)
+    const ship = new Ship(this, this.base.x, this.base.y, 'Hauler-01', { x: this.base.x, y: this.base.y }, this.base)
 
     // Pre-load one AutoMiner on the first medium attachment point
     const miner = new AutoMiner(this)
@@ -761,10 +933,13 @@ export class SpaceScene extends Phaser.Scene {
       })
     })
     ship.on('unload-complete', () => {
-      this.base.chargeDockFee(ship.dockSlotIndex)
+      this.base.chargeDockFee(ship.dockIsPublic)
       this.releaseDockSlot(ship)
       if (ship.thrusterFuel < HAULER_FUEL_MAX || ship.rcsFuel < HAULER_RCS_MAX) {
-        this.base.credits -= getPrice('dock-refuel')
+        // Per-unit charge: pay in proportion to the fuel/RCS actually topped up.
+        const fuelCost = ((HAULER_FUEL_MAX - ship.thrusterFuel) / HAULER_FUEL_MAX) * this.effectiveFuelPrice()
+        const rcsCost = ((HAULER_RCS_MAX - ship.rcsFuel) / HAULER_RCS_MAX) * this.effectiveRcsPrice()
+        this.base.credits -= fuelCost + rcsCost
         this.base.pushToStore()
         ship.thrusterFuel = HAULER_FUEL_MAX
         ship.rcsFuel = HAULER_RCS_MAX
@@ -814,7 +989,7 @@ export class SpaceScene extends Phaser.Scene {
       .map((ap, idx) => ({ ap, idx }))
       .filter(({ ap }) => ap.size === 'medium' && ap.payload === null)
 
-    const collectCount = Math.min(fullNetIds.length, emptyMediumSlotPairs.length)
+    const collectCount = planNetCollection(fullNetIds, emptyMediumSlotPairs.length).collect.length
 
     if (collectCount === 0) {
       complete()
@@ -878,7 +1053,7 @@ export class SpaceScene extends Phaser.Scene {
           for (const netId of miner.tetheredNetIds) {
             const net = this.cargoNetMap.get(netId)
             if (net) {
-              this.base.acceptCargo({ [net.resourceType]: net.quantity })
+              this.base.acceptOre(net.quantity, net.composition)
               this.cargoNetMap.delete(net.id)
               this.cargoNets = this.cargoNets.filter(n => n.id !== net.id)
               if (this.selectedCargoNetEntity === net) this.selectedCargoNetEntity = null
@@ -912,8 +1087,11 @@ export class SpaceScene extends Phaser.Scene {
     const netAp = ship.attachmentPoints.find(a => a.payload?.kind === 'cargo-net')
     if (netAp && netAp.payload?.kind === 'cargo-net') {
       const net = this.cargoNetMap.get(netAp.payload.netId)
+      // Silo soft-caps: always accept a delivered net (cargo already mined is never
+      // stranded), even if it pushes the silo transiently over capacity. Acquisition
+      // is halted upstream (auto-designate) when the silo is full.
       if (net) {
-        this.base.acceptCargo({ [net.resourceType]: net.quantity })
+        this.base.acceptOre(net.quantity, net.composition)
         this.cargoNetMap.delete(net.id)
         this.cargoNets = this.cargoNets.filter(n => n.id !== net.id)
         if (this.selectedCargoNetEntity === net) this.selectedCargoNetEntity = null
@@ -967,7 +1145,7 @@ export class SpaceScene extends Phaser.Scene {
     // designation-driven only — there is no auto-deploy to arbitrary asteroids.
     for (const ship of this.ships) {
       if (ship.shipState !== 'idle') continue
-      if (Phaser.Math.Distance.Between(ship.x, ship.y, BASE_X, BASE_Y) >= PROXIMITY_BASE_RADIUS) continue
+      if (Phaser.Math.Distance.Between(ship.x, ship.y, this.base.x, this.base.y) >= PROXIMITY_BASE_RADIUS) continue
       for (const ap of ship.attachmentPoints) {
         if (ap.payload?.kind !== 'auto-miner') continue
         const miner = this.autoMinerMap.get(ap.payload.minerId)
@@ -986,20 +1164,25 @@ export class SpaceScene extends Phaser.Scene {
     // is attached to it any more (recovered, low-battery, or destroyed), revert to
     // queued so a replacement is (re)dispatched. Depleted asteroids are retired
     // elsewhere, so their designations are already gone.
-    let reconciled = false
-    for (const d of this.designations) {
-      if (d.status !== 'fulfilled') continue
-      if (!this.asteroidMap.has(d.asteroidId)) continue
-      if (this.autoMiners.some(m => m.asteroidId === d.asteroidId)) continue
-      d.status = 'queued'
-      d.claimedByShipId = null
-      reconciled = true
+    const minedAsteroidIds = new Set(this.autoMiners.map(m => m.asteroidId).filter((id): id is string => id !== null))
+    const revertIds = new Set(designationsToRevert(
+      this.designations,
+      id => this.asteroidMap.has(id),
+      id => minedAsteroidIds.has(id),
+    ))
+    if (revertIds.size > 0) {
+      for (const d of this.designations) {
+        if (revertIds.has(d.id)) {
+          d.status = 'queued'
+          d.claimedByShipId = null
+        }
+      }
+      designationQueue.set([...this.designations])
     }
-    if (reconciled) designationQueue.set([...this.designations])
 
     // Fulfil queued mining designations
     for (const designation of [...this.designations]) {
-      if (designation.status !== 'queued') continue
+      if (designation.status !== 'queued' || designation.kind !== 'mine') continue
       const asteroid = this.asteroidMap.get(designation.asteroidId)
       if (!asteroid) {
         this.retireDesignationsForAsteroid(designation.asteroidId)
@@ -1008,9 +1191,9 @@ export class SpaceScene extends Phaser.Scene {
       // Leave the designation queued while the asteroid is in its post-exhaustion
       // cooldown, rather than dispatching a hauler that would just fail again.
       if (this.isAsteroidOnCooldown(designation.asteroidId)) continue
-      // Skip if a ship is already heading to this asteroid or fetching miner for it
+      // Skip if a mining ship is already heading to this asteroid or fetching miner for it
       const alreadyDispatched =
-        this.ships.some(s => s.asteroidTarget?.id === designation.asteroidId) ||
+        this.ships.some(s => s.asteroidTarget?.id === designation.asteroidId && !s.isScanJob) ||
         [...this.shipPendingDesignationAsteroid.values()].includes(designation.asteroidId)
       if (alreadyDispatched) continue
 
@@ -1050,6 +1233,8 @@ export class SpaceScene extends Phaser.Scene {
         hauler.pushToStore()
       }
     }
+
+    this.dispatchScans()
 
     for (const miner of this.autoMiners) {
       // Free-orbiting miner: use existing beacon-response flow (initiateRespondToBeacon
@@ -1101,7 +1286,7 @@ export class SpaceScene extends Phaser.Scene {
         m => m.asteroidId === aId &&
           m.tetheredNetIds.some(id => this.cargoNetMap.get(id)?.state === 'full-tethered'),
       )
-      if (asteroidGone || (!hasActionableMiner && !hasCollectableNets)) {
+      if (shouldReleaseWaitingHauler(!asteroidGone, hasActionableMiner, hasCollectableNets)) {
         this.departShipForBase(ship)
       }
     }
@@ -1109,6 +1294,171 @@ export class SpaceScene extends Phaser.Scene {
     // (Removed the unconditional "deploy carried miners to nearest asteroid" loop:
     // deployment is now designation-driven only, and idle carriers recharge/store
     // their miners at base via the loop at the top of this method.)
+
+    if (this.debugMode) this.checkInvariants()
+  }
+
+  /**
+   * Dev-only: assert the simulation's structural invariants and log any violation
+   * at its origin. Runs at the end of autoDispatch (a stable checkpoint, after the
+   * loop's own fixups) when debug mode (F9) is on. Detects, never throws/fixes.
+   */
+  private checkInvariants(): void {
+    const warn = (msg: string) => {
+      console.warn(`[invariant] ${msg}`)
+      this.pushAttachNotification(`Invariant: ${msg}`, true)
+      logInvariant(msg, this.gameClock)
+    }
+
+    // 1 & 2: no miner / net id referenced by more than one slot.
+    const minerSlotCount = new Map<string, number>()
+    const netSlotCount = new Map<string, number>()
+    for (const ship of this.ships) {
+      for (const ap of ship.attachmentPoints) {
+        const p = ap.payload
+        if (p?.kind === 'auto-miner') minerSlotCount.set(p.minerId, (minerSlotCount.get(p.minerId) ?? 0) + 1)
+        else if (p?.kind === 'cargo-net') netSlotCount.set(p.netId, (netSlotCount.get(p.netId) ?? 0) + 1)
+        // 3: reserved slot references an existing target.
+        else if (p?.kind === 'reserved') {
+          const exists = p.forKind === 'auto-miner' ? this.autoMinerMap.has(p.targetId) : this.cargoNetMap.has(p.targetId)
+          if (!exists) warn(`reserved slot on ${ship.id} targets missing ${p.forKind} ${p.targetId}`)
+        }
+      }
+    }
+    for (const [id, n] of minerSlotCount) if (n > 1) warn(`miner ${id} referenced by ${n} slots`)
+    for (const [id, n] of netSlotCount) if (n > 1) warn(`net ${id} referenced by ${n} slots`)
+
+    // 4: each fulfilled designation has a miner attached to its asteroid.
+    for (const d of this.designations) {
+      if (d.status !== 'fulfilled') continue
+      if (!this.autoMiners.some(m => m.asteroidId === d.asteroidId)) {
+        warn(`fulfilled designation for ${d.asteroidId} has no attached miner`)
+      }
+    }
+
+    // 5: no idle ship retains an asteroidTarget.
+    for (const ship of this.ships) {
+      if (ship.shipState === 'idle' && ship.asteroidTarget !== null) {
+        warn(`idle ship ${ship.id} retains asteroidTarget ${ship.asteroidTarget.id}`)
+      }
+    }
+
+    // 6: economy invariants (silo soft-cap over-capacity is legal and excluded;
+    // only corrupt/out-of-bounds economy state is reported). Pure, unit-tested.
+    const econ = checkEconomy({
+      markets: {
+        iron:          { current: currentPrice(this.base.markets.iron),          baseline: this.base.markets.iron.baseline,          pressure: this.base.markets.iron.pressure },
+        ice:           { current: currentPrice(this.base.markets.ice),           baseline: this.base.markets.ice.baseline,           pressure: this.base.markets.ice.pressure },
+        silicates:     { current: currentPrice(this.base.markets.silicates),     baseline: this.base.markets.silicates.baseline,     pressure: this.base.markets.silicates.pressure },
+        'rare-metals': { current: currentPrice(this.base.markets['rare-metals']), baseline: this.base.markets['rare-metals'].baseline, pressure: this.base.markets['rare-metals'].pressure },
+      },
+      capacities: { solar: this.base.solarCapacity, propellant: this.base.propellantCapacity, foundry: this.base.foundryCapacity },
+      silo: this.base.storage,
+      events: this.marketEvents,
+      gameClock: this.gameClock,
+    })
+    for (const msg of econ) warn(msg)
+
+    // Industry invariants (Phase 5): ore silo, compositions, scan-queue integrity.
+    const industry = checkIndustry({
+      oreQuantity: this.base.oreQuantity,
+      oreComposition: this.base.oreComposition,
+      asteroids: this.asteroids.map(a => ({ id: a.id, composition: a.composition, scanned: a.scanned })),
+      scanDesignationAsteroidIds: this.designations.filter(d => d.kind === 'scan').map(d => d.asteroidId),
+    })
+    for (const msg of industry) warn(msg)
+
+    // 7: owned-dock occupancy consistent with ships.
+    for (let i = 0; i < this.slotOccupants.length; i++) {
+      const occ = this.slotOccupants[i]
+      if (occ === null) continue
+      const ship = this.ships.find(s => s.id === occ)
+      if (!ship || ship.dockSlotIndex !== i || ship.dockIsPublic) {
+        warn(`owned dock ${i} occupant ${occ} inconsistent (dockSlotIndex/public mismatch)`)
+      }
+    }
+
+    // 8: active beacons reference existing miners (no stale beacon for a
+    // destroyed/recovered miner). State is not asserted — low-battery miners beacon
+    // while still 'mining', so a precise state check would false-positive.
+    for (const b of get(activeBeacons)) {
+      const m = this.autoMinerMap.get(b.id)
+      if (!m || m.state === 'in-transit' || m.state === 'station-stored') {
+        warn(`activeBeacon ${b.id} references a non-beaconing/absent miner`)
+      }
+    }
+  }
+
+  /** Dev-only: per-entity state labels near each entity while debug mode is on. */
+  private updateDebugOverlay(): void {
+    if (!this.debugMode) {
+      if (this.debugLabels.size > 0) {
+        for (const t of this.debugLabels.values()) t.destroy()
+        this.debugLabels.clear()
+      }
+      return
+    }
+
+    const seen = new Set<string>()
+    const label = (key: string, x: number, y: number, text: string, color: string, below = false) => {
+      seen.add(key)
+      let t = this.debugLabels.get(key)
+      if (!t) {
+        t = this.add.text(0, 0, '', { fontSize: '9px', fontFamily: 'monospace', color }).setDepth(50)
+        this.debugLabels.set(key, t)
+      }
+      t.setOrigin(0.5, below ? 0 : 1) // below → anchor top (text under the point)
+      if (t.text !== text) t.setText(text)
+      t.setPosition(x, y)
+      t.setVisible(true)
+    }
+
+    for (const ship of this.ships) {
+      const dock = ship.dockSlotIndex !== null ? ` d${ship.dockSlotIndex}${ship.dockIsPublic ? 'P' : ''}` : ''
+      const hangar = ship.hangarSlotIndex !== null ? ` h${ship.hangarSlotIndex}` : ''
+      label(`s:${ship.id}`, ship.x, ship.y - 16,
+        `${ship.shipState}${dock}${hangar}\nf${Math.round(ship.thrusterFuel)} r${Math.round(ship.rcsFuel)} b${Math.round(ship.battery)}`,
+        '#88ddff')
+    }
+    for (const miner of this.autoMiners) {
+      if (!miner.visible) continue
+      const br = miner.beaconReason ? ` ${miner.beaconReason}` : ''
+      label(`m:${miner.id}`, miner.x, miner.y - 10,
+        `${miner.state} c${Math.round(miner.condition * 100)} b${Math.round(miner.battery)}${br}`,
+        '#aaddee')
+    }
+    for (const net of this.cargoNets) {
+      if (!net.visible) continue
+      const tag = net.freeOrbitalRadius !== null
+        ? (net.designatedForCollection ? 'untethered·desig' : 'untethered')
+        : net.state
+      label(`n:${net.id}`, net.x, net.y + 8, `${tag} ${Math.floor(net.quantity)}`, '#ffcc66', true)
+    }
+    for (const d of this.designations) {
+      const ast = this.asteroidMap.get(d.asteroidId)
+      if (!ast) continue
+      label(`d:${d.kind}:${d.asteroidId}`, ast.x, ast.y + 14, `[${d.kind[0]}:${d.status}]`, '#88ffaa', true)
+    }
+
+    // Economy readout near the base: per-resource price (current/baseline),
+    // cost-lever capacities, and active events.
+    const prices = (['iron', 'ice', 'silicates', 'rare-metals'] as ResourceType[])
+      .map(t => `${t.slice(0, 2)} ${currentPrice(this.base.markets[t]).toFixed(1)}/${this.base.markets[t].baseline.toFixed(1)}`)
+      .join('  ')
+    const levers = `cap sol${this.base.solarCapacity.toFixed(0)} prop${this.base.propellantCapacity.toFixed(0)} fnd${this.base.foundryCapacity.toFixed(0)}`
+    const events = this.marketEvents.length > 0
+      ? this.marketEvents.map(e => `${e.resourceType.slice(0, 2)}${e.type[0]}×${e.multiplier.toFixed(1)}`).join(' ')
+      : 'none'
+    const scannedCount = this.asteroids.filter(a => a.scanned).length
+    const industry = `ore ${Math.floor(this.base.oreQuantity)}/${this.base.oreSiloCapacity}  probes ${this.base.scannerCount}  scanned ${scannedCount}/${this.asteroids.length}`
+    label('econ', this.base.x, this.base.y - 52, `${prices}\n${levers}\nev: ${events}\n${industry}`, '#ccbb77')
+
+    for (const [key, t] of this.debugLabels) {
+      if (!seen.has(key)) {
+        t.destroy()
+        this.debugLabels.delete(key)
+      }
+    }
   }
 
   private dispatchToAsteroid(asteroid: Asteroid): void {
@@ -1156,6 +1506,7 @@ export class SpaceScene extends Phaser.Scene {
     this.selectionRing.setDepth(ship.depth - 1)
     this.drawSelectionRing()
     ship.select()
+    this.followEntity(ship)
   }
 
   private clearSelection(): void {
@@ -1192,16 +1543,24 @@ export class SpaceScene extends Phaser.Scene {
 
   private toggleFollowCam(): void {
     if (!this.selectedShip) return
-    if (this.followCam) {
-      this.cancelFollowCam()
-    } else {
-      this.followCam = true
-      this.cameras.main.startFollow(this.selectedShip, false, 1, 1)
-    }
+    if (this.followCam) this.cancelFollowCam()
+    else this.followEntity(this.selectedShip)
+  }
+
+  /** Locks the camera onto an entity and releases automatically if it despawns. */
+  private followEntity(target: Phaser.GameObjects.GameObject & { x: number; y: number }): void {
+    this.followCam = true
+    this.followTarget = target
+    this.cameras.main.startFollow(target, false, FOLLOW_LERP, FOLLOW_LERP)
+    // Defensive: if the followed entity is ever destroyed, release rather than strand the camera.
+    target.once(Phaser.GameObjects.Events.DESTROY, () => {
+      if (this.followTarget === target) this.cancelFollowCam()
+    })
   }
 
   private cancelFollowCam(): void {
     this.followCam = false
+    this.followTarget = null
     this.cameras.main.stopFollow()
   }
 
@@ -1213,15 +1572,16 @@ export class SpaceScene extends Phaser.Scene {
       m = Math.min(m, Math.max(PROXIMITY_MIN_SPEED, dPlanet / PROXIMITY_PLANET_RADIUS))
     }
 
-    const dBase = Phaser.Math.Distance.Between(ship.x, ship.y, BASE_X, BASE_Y)
+    const dBase = Phaser.Math.Distance.Between(ship.x, ship.y, this.base.x, this.base.y)
     if (dBase < PROXIMITY_BASE_RADIUS) {
       m = Math.min(m, Math.max(PROXIMITY_MIN_SPEED, dBase / PROXIMITY_BASE_RADIUS))
     }
 
     for (const asteroid of this.asteroids) {
+      const radius = asteroidProximityRadius(PROXIMITY_ASTEROID_RADIUS, asteroid.sizeCategory)
       const dAst = Phaser.Math.Distance.Between(ship.x, ship.y, asteroid.x, asteroid.y)
-      if (dAst < PROXIMITY_ASTEROID_RADIUS) {
-        m = Math.min(m, Math.max(PROXIMITY_MIN_SPEED, dAst / PROXIMITY_ASTEROID_RADIUS))
+      if (dAst < radius) {
+        m = Math.min(m, Math.max(PROXIMITY_MIN_SPEED, dAst / radius))
       }
     }
 
@@ -1253,7 +1613,7 @@ export class SpaceScene extends Phaser.Scene {
 
     this.minimap.fillStyle(MINIMAP_COLOR_BASE, 1)
     const baseHalf = MINIMAP_DOT_BASE / zoom / 2
-    this.minimap.fillRect(wx(BASE_X) - baseHalf, wy(BASE_Y) - baseHalf, MINIMAP_DOT_BASE / zoom, MINIMAP_DOT_BASE / zoom)
+    this.minimap.fillRect(wx(this.base.x) - baseHalf, wy(this.base.y) - baseHalf, MINIMAP_DOT_BASE / zoom, MINIMAP_DOT_BASE / zoom)
 
     for (const asteroid of this.asteroids) {
       const color = asteroid.isCompany ? MINIMAP_COLOR_COMPANY : MINIMAP_COLOR_ASTEROID
@@ -1292,7 +1652,10 @@ export class SpaceScene extends Phaser.Scene {
     const asteroid = new Asteroid(this, data)
     this.asteroids.push(asteroid)
     this.asteroidMap.set(asteroid.id, asteroid)
-    if (this.base.autoDesignate) {
+    // Back-pressure: a full ORE silo halts new acquisition (mining now fills the ore
+    // silo; the resource silo full instead pauses processing). An unattended fleet
+    // converges and idles rather than mining ore it cannot store.
+    if (this.base.autoDesignate && !this.base.isOreSiloFull()) {
       this.addDesignation(asteroid.id)
     }
   }
@@ -1356,7 +1719,7 @@ export class SpaceScene extends Phaser.Scene {
     } else if (cmd.type === 'respondToBeacon') {
       this.initiateRespondToBeacon(cmd.minerId)
     } else if (cmd.type === 'purchaseMiner') {
-      this.performPurchaseMiner(cmd.haulerId)
+      this.performPurchaseMiner()
     } else if (cmd.type === 'collectNets') {
       this.initiateCollectNets(cmd.haulerId, cmd.asteroidId)
     } else if (cmd.type === 'purchaseMinerSlot') {
@@ -1367,10 +1730,23 @@ export class SpaceScene extends Phaser.Scene {
       this.base.purchaseHangar()
     } else if (cmd.type === 'purchasePressurization') {
       this.base.purchasePressurization()
+    } else if (cmd.type === 'purchaseSiloCapacity') {
+      this.base.purchaseSiloCapacity()
+    } else if (cmd.type === 'purchaseOreSiloCapacity') {
+      this.base.purchaseOreSiloCapacity()
+      this.pushOreSiloStore(false)
+    } else if (cmd.type === 'investInfrastructure') {
+      this.base.investInfrastructure(cmd.lever)
     } else if (cmd.type === 'designateAsteroid') {
-      this.addDesignation(cmd.asteroidId)
+      this.addDesignation(cmd.asteroidId, 'mine')
     } else if (cmd.type === 'undesignateAsteroid') {
-      this.removeDesignation(cmd.asteroidId)
+      this.removeDesignation(cmd.asteroidId, 'mine')
+    } else if (cmd.type === 'designateScan') {
+      this.addDesignation(cmd.asteroidId, 'scan')
+    } else if (cmd.type === 'undesignateScan') {
+      this.removeDesignation(cmd.asteroidId, 'scan')
+    } else if (cmd.type === 'purchaseScanner') {
+      this.base.purchaseScanner()
     } else if (cmd.type === 'collectNet') {
       const net = this.cargoNetMap.get(cmd.netId)
       if (net && net.freeOrbitalRadius !== null && net.state === 'full-tethered') {
@@ -1555,6 +1931,7 @@ export class SpaceScene extends Phaser.Scene {
       const freeSlot = waitingShip.attachmentPoints.find(ap => ap.size === 'medium' && ap.payload === null)
       if (freeSlot) {
         freeSlot.payload = { kind: 'auto-miner', minerId: miner.id }
+        miner.ejectActiveNet() // bring home the partial net too
         this.beginCollecting(waitingShip, miner, () => this.performAtAsteroidRecovery(waitingShip, miner))
         minerRecovered = true
       } else {
@@ -1639,6 +2016,10 @@ export class SpaceScene extends Phaser.Scene {
     miner.pushToStore()
     ship.minerTarget = miner
 
+    // Eject the partial active net so its resources come home (collected if a slot
+    // is free, otherwise orphaned to free-orbit — never lost).
+    miner.ejectActiveNet()
+
     // Step 2: collect any tethered nets as separate per-item steps (beginCollecting
     // no-ops if none), then orphan whatever did not fit and head home.
     this.beginCollecting(ship, miner, () => {
@@ -1680,7 +2061,7 @@ export class SpaceScene extends Phaser.Scene {
     // miner, re-mark the asteroid as being mined, and return to base.
     if (this.autoMiners.some(m => m !== miner && m.asteroidId === asteroid.id)) {
       this.retireDesignationsForAsteroid(asteroid.id)
-      this.designations.push({ id: nanoid(), asteroidId: asteroid.id, status: 'fulfilled', claimedByShipId: null })
+      this.designations.push({ id: nanoid(), asteroidId: asteroid.id, kind: 'mine', status: 'fulfilled', claimedByShipId: null })
       designationQueue.set([...this.designations])
       ship.asteroidTarget = null
       this.departShipForBase(ship)
@@ -1712,11 +2093,11 @@ export class SpaceScene extends Phaser.Scene {
     // Ensure a fulfilled designation marks this asteroid as being mined, even if
     // the claimed designation was removed by an un-designate mid-delivery (so it
     // cannot be re-designated and a second miner stacked on top).
-    const claimedDesig = this.designations.find(d => d.claimedByShipId === ship.id)
+    const claimedDesig = this.designations.find(d => d.claimedByShipId === ship.id && d.kind === 'mine')
     if (claimedDesig) {
       this.fulfillDesignation(claimedDesig.id)
-    } else if (!this.designations.some(d => d.asteroidId === asteroid.id)) {
-      this.designations.push({ id: nanoid(), asteroidId: asteroid.id, status: 'fulfilled', claimedByShipId: null })
+    } else if (!this.designations.some(d => d.asteroidId === asteroid.id && d.kind === 'mine')) {
+      this.designations.push({ id: nanoid(), asteroidId: asteroid.id, kind: 'mine', status: 'fulfilled', claimedByShipId: null })
       designationQueue.set([...this.designations])
     }
 
@@ -1756,8 +2137,6 @@ export class SpaceScene extends Phaser.Scene {
       return
     }
 
-    miner.rcsFuel = Math.max(0, miner.rcsFuel - MINER_RCS_DRAIN_PER_ATTACH)
-
     const effectiveFailProb = ATTACH_FAILURE_PROB + CONDITION_MAX_PENALTY * conditionPenaltyFraction(miner.condition)
     if (Math.random() >= effectiveFailProb) {
       miner.state = 'mining'
@@ -1779,7 +2158,7 @@ export class SpaceScene extends Phaser.Scene {
       this.autoMinerMap.delete(miner.id)
       miner.destroy()
       ship.shipState = 'traveling-to-base'
-      ship.target = { x: BASE_X, y: BASE_Y }
+      ship.target = { x: this.base.x, y: this.base.y }
       ship.pushToStore()
       return
     }
@@ -1859,7 +2238,7 @@ export class SpaceScene extends Phaser.Scene {
     const miner = this.autoMinerMap.get(minerId)
     if (!miner || miner.state !== 'station-stored') return false
 
-    const cost = Math.round((1.0 - miner.condition) * 100) * getPrice('repair-per-condition-point')
+    const cost = Math.round((1.0 - miner.condition) * 100) * this.effectiveRepairPrice()
 
     const slotIndex = this.hangarOccupants.findIndex(occ => occ === null)
     if (slotIndex === -1) return false
@@ -1900,8 +2279,8 @@ export class SpaceScene extends Phaser.Scene {
       miner.beaconReason = null
     } else {
       // No storage slot free — eject to orbit near base for beacon recovery
-      miner.freeOrbitalRadius = BASE_Y
-      miner.freeOrbitalAngle = Math.atan2(BASE_Y, BASE_X) + 0.15
+      miner.freeOrbitalRadius = this.base.orbitalRadius
+      miner.freeOrbitalAngle = this.base.orbitalAngle + 0.15
       miner.setPosition(
         Math.cos(miner.freeOrbitalAngle) * miner.freeOrbitalRadius,
         Math.sin(miner.freeOrbitalAngle) * miner.freeOrbitalRadius - 20,
@@ -1929,30 +2308,26 @@ export class SpaceScene extends Phaser.Scene {
     const name = `Hauler-${String(index).padStart(2, '0')}`
     const offset = 40 + (index % 4) * 20
     const angle = (index * 90) % 360
-    const spawnX = BASE_X + Math.cos(Phaser.Math.DegToRad(angle)) * offset
-    const spawnY = BASE_Y + Math.sin(Phaser.Math.DegToRad(angle)) * offset
-    const ship = new Ship(this, spawnX, spawnY, name, { x: BASE_X, y: BASE_Y }, this.base)
+    const spawnX = this.base.x + Math.cos(Phaser.Math.DegToRad(angle)) * offset
+    const spawnY = this.base.y + Math.sin(Phaser.Math.DegToRad(angle)) * offset
+    const ship = new Ship(this, spawnX, spawnY, name, { x: this.base.x, y: this.base.y }, this.base)
     this.ships.push(ship)
     this.base.registerShip(ship.id)
     this.attachShipEvents(ship)
   }
 
-  private performPurchaseMiner(haulerId: string): void {
-    const ship = this.ships.find(s => s.id === haulerId)
-    if (!ship) return
-    const slot = ship.attachmentPoints.find(ap => ap.size === 'medium' && ap.payload === null)
-    if (!slot) return
+  private performPurchaseMiner(): void {
+    // Buy a miner into Base station storage; refuse if storage is full.
+    if (this.base.stationMinerIds.length >= this.base.stationMinerSlotCount) return
     if (!this.base.purchaseMiner()) return
 
     const miner = new AutoMiner(this)
-    miner.setPosition(ship.x, ship.y)
+    miner.state = 'station-stored'
+    miner.setVisible(false)
     this.autoMiners.push(miner)
     this.autoMinerMap.set(miner.id, miner)
     this.attachMinerEvents(miner)
-
-    const idx = ship.attachmentPoints.indexOf(slot)
-    ship.attachmentPoints[idx] = { ...slot, payload: { kind: 'auto-miner', minerId: miner.id } }
-    ship.pushToStore()
+    this.base.storeAutoMiner(miner.id)
   }
 
   private initiateShipUpgrade(shipId: string, stat: 'cargo'): void {
@@ -1981,7 +2356,7 @@ export class SpaceScene extends Phaser.Scene {
       ship.pushToStore()
       return
     }
-    const slotPos = this.hangarPositions[slotIdx]
+    const slotPos = this.hangarBayPos(slotIdx)
     const isOwnedPressurized = slotIdx < this.base.ownedHangarCount && this.base.hangarPressurized
     const duration = UPGRADE_HANGAR_DURATION * (isOwnedPressurized ? HANGAR_PRESSURIZED_FACTOR : 1)
     ship.enterHangar(slotPos, duration)
@@ -2054,18 +2429,25 @@ export class SpaceScene extends Phaser.Scene {
     ship.pushToStore()
   }
 
-  addDesignation(asteroidId: string): void {
-    if (this.designations.some(d => d.asteroidId === asteroidId)) return
-    // Do not designate an asteroid that already has a miner deployed/deploying there
-    // (e.g. after an un-designate mid-delivery left it mined but un-designated).
-    if (this.autoMiners.some(m => m.asteroidId === asteroidId)) return
-    const entry: MiningDesignation = { id: nanoid(), asteroidId, status: 'queued', claimedByShipId: null }
+  addDesignation(asteroidId: string, kind: 'mine' | 'scan' = 'mine'): void {
+    if (this.designations.some(d => d.asteroidId === asteroidId && d.kind === kind)) return
+    if (kind === 'mine') {
+      // Do not mine-designate an asteroid that already has a miner deployed/deploying there
+      // (e.g. after an un-designate mid-delivery left it mined but un-designated).
+      if (this.autoMiners.some(m => m.asteroidId === asteroidId)) return
+    } else {
+      // Scanning an already-scanned asteroid is a no-op.
+      if (this.asteroidMap.get(asteroidId)?.scanned) return
+    }
+    const entry: MiningDesignation = { id: nanoid(), asteroidId, kind, status: 'queued', claimedByShipId: null }
     this.designations.push(entry)
     designationQueue.set([...this.designations])
   }
 
-  removeDesignation(asteroidId: string): void {
-    this.designations = this.designations.filter(d => d.asteroidId !== asteroidId)
+  removeDesignation(asteroidId: string, kind?: 'mine' | 'scan'): void {
+    this.designations = this.designations.filter(
+      d => d.asteroidId !== asteroidId || (kind !== undefined && d.kind !== kind),
+    )
     designationQueue.set([...this.designations])
   }
 
@@ -2105,6 +2487,70 @@ export class SpaceScene extends Phaser.Scene {
     if (!had) return
     this.designations = this.designations.filter(d => d.asteroidId !== asteroidId)
     designationQueue.set([...this.designations])
+  }
+
+  /** Assigns scanner-haulers to queued scan designations (probe stays on the hauler). */
+  private dispatchScans(): void {
+    // Reconcile claimed scan designations whose hauler was diverted/lost → re-queue.
+    let reverted = false
+    for (const d of this.designations) {
+      if (d.kind !== 'scan' || d.status !== 'claimed') continue
+      const ship = this.ships.find(s => s.id === d.claimedByShipId)
+      const onJob = !!ship && ship.isScanJob && ship.asteroidTarget?.id === d.asteroidId
+      if (!onJob) {
+        d.status = 'queued'
+        d.claimedByShipId = null
+        reverted = true
+      }
+    }
+    if (reverted) designationQueue.set([...this.designations])
+
+    for (const designation of [...this.designations]) {
+      if (designation.status !== 'queued' || designation.kind !== 'scan') continue
+      const asteroid = this.asteroidMap.get(designation.asteroidId)
+      if (!asteroid || asteroid.scanned) {
+        this.removeDesignation(designation.asteroidId, 'scan')
+        continue
+      }
+      // A scan ship is already en route to this asteroid.
+      if (this.ships.some(s => s.isScanJob && s.asteroidTarget?.id === designation.asteroidId)) continue
+
+      const pick = selectScanHauler(this.ships, this.base.scannerCount, { x: asteroid.x, y: asteroid.y })
+      if (!pick) continue // no scanner-capable hauler available (shortage) — leave queued
+      if (!this.claimDesignation(designation.id, pick.ship.id)) continue
+
+      const hauler = pick.ship
+      if (pick.drawFromStorage) {
+        const slot = hauler.attachmentPoints.find(ap => ap.size === 'small' && ap.payload === null)
+        if (!slot) {
+          this.releaseDesignation(designation.id)
+          continue
+        }
+        slot.payload = { kind: 'scanner' }
+        this.base.scannerCount--
+        this.base.pushToStore()
+      }
+      hauler.asteroidTarget = asteroid
+      hauler.isScanJob = true
+      hauler.target = { x: asteroid.x, y: asteroid.y }
+      hauler.shipState = 'traveling-to-asteroid'
+      hauler.pushToStore()
+    }
+  }
+
+  /** Reveals the scanned asteroid's composition, clears the scan job (probe stays on the hauler). */
+  private completeScan(ship: Ship): void {
+    const asteroid = ship.asteroidTarget
+    if (asteroid) {
+      asteroid.reveal() // mark scanned + flip the unknown sprite to the resource frame
+      this.removeDesignation(asteroid.id, 'scan') // job done; the scanned flag is the persistent record
+    }
+    ship.isScanJob = false
+    ship.asteroidTarget = null
+    ship.target = null
+    ship.waitOrbitalAngle = null // reset park orbit used while scanning
+    ship.shipState = 'idle'
+    ship.pushToStore()
   }
 
   // ── Attachment slot claiming (single authoritative path) ──────────────────
@@ -2193,7 +2639,7 @@ export class SpaceScene extends Phaser.Scene {
   private rechargeMinerAtStation(miner: AutoMiner): void {
     if (miner.battery >= MINER_BATTERY_MAX) return
     const deficit = MINER_BATTERY_MAX - miner.battery
-    this.base.credits -= Math.round(deficit * getPrice('electricity-per-battery-unit'))
+    this.base.credits -= Math.round(deficit * this.effectiveElectricityPrice())
     miner.battery = MINER_BATTERY_MAX
     this.base.pushToStore()
   }
@@ -2226,11 +2672,17 @@ export class SpaceScene extends Phaser.Scene {
 
     keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.ESC).on('down', () => {
       this.clearSelection()
-      basePanelOpen.set(false)
+      // Base panel stays pinned open; it is closed only via its X button.
     })
 
     keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.F).on('down', () => {
       this.toggleFollowCam()
+    })
+
+    keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.F9).on('down', () => {
+      this.debugMode = !this.debugMode
+      this.pushAttachNotification(`Debug mode ${this.debugMode ? 'ON' : 'OFF'}`, false)
+      if (this.debugMode) this.checkInvariants()
     })
 
     this.input.on(
@@ -2283,6 +2735,7 @@ export class SpaceScene extends Phaser.Scene {
                     this.selectedAutoMinerEntity = null
                   }
                   basePanelOpen.set(true)
+                  this.followEntity(this.base)
                 } else {
                   const hitAsteroid = targets.find(t => t instanceof Asteroid) as Asteroid | undefined
                   if (hitAsteroid) {
@@ -2299,7 +2752,7 @@ export class SpaceScene extends Phaser.Scene {
                     }
                   } else {
                     this.clearSelection()
-                    basePanelOpen.set(false)
+                    // Base panel stays pinned open; closed only via its X button.
                   }
                 }
               }
@@ -2360,12 +2813,127 @@ export class SpaceScene extends Phaser.Scene {
     if (cam.zoom < this.minZoom) cam.setZoom(this.minZoom)
   }
 
+  // --- Cost levers: effective consumable prices = base × capacity-vs-demand factor.
+  // Demand is owned-fleet composition (idle-safe: a count, not a timed drain).
+  private effectiveElectricityPrice(): number {
+    return effectivePrice(getPrice('electricity-per-battery-unit'), this.base.solarCapacity, this.autoMiners.length)
+  }
+
+  /** Effective price of a full thruster-fuel tank (per-unit at refuel; lowered by the propellant lever). */
+  private effectiveFuelPrice(): number {
+    return effectivePrice(getPrice('fuel-refuel'), this.base.propellantCapacity, this.ships.length)
+  }
+
+  /** Effective price of a full RCS tank (per-unit at refuel; lowered by the propellant lever). */
+  private effectiveRcsPrice(): number {
+    return effectivePrice(getPrice('rcs-refuel'), this.base.propellantCapacity, this.ships.length)
+  }
+
+  private effectiveRepairPrice(): number {
+    return effectivePrice(getPrice('repair-per-condition-point'), this.base.foundryCapacity, this.autoMiners.length)
+  }
+
+  // --- Market events: seeded, persisted exogenous shocks that shift sell baselines.
+  private advanceSchedule(spawn: boolean): void {
+    const rng = createRng(Math.imul(this.eventSeed, 0x9e3779b1) >>> 0)
+    this.eventSeed = (this.eventSeed + 1) >>> 0
+    if (spawn) this.marketEvents.push(rollEvent(rng, this.gameClock))
+    this.nextEventAt = this.gameClock + nextInterval(rng)
+  }
+
+  private updateMarketEvents(): void {
+    // Spawn at most one due event per tick (caps catch-up after a backgrounded tab).
+    if (this.gameClock >= this.nextEventAt) this.advanceSchedule(true)
+    this.marketEvents = this.marketEvents.filter(e => !isExpired(e, this.gameClock))
+    const now = this.gameClock
+    this.base.applyEventMultipliers({
+      iron:          combinedMultiplier(this.marketEvents, 'iron', now),
+      ice:           combinedMultiplier(this.marketEvents, 'ice', now),
+      silicates:     combinedMultiplier(this.marketEvents, 'silicates', now),
+      'rare-metals': combinedMultiplier(this.marketEvents, 'rare-metals', now),
+    })
+    activeMarketEvents.set([...this.marketEvents])
+  }
+
+  private sampleMetrics(): void {
+    const t = this.gameClock
+    for (const type of ['iron', 'ice', 'silicates', 'rare-metals'] as ResourceType[]) {
+      const m = this.base.markets[type]
+      this.priceSeries[type] = pushBounded(
+        this.priceSeries[type], { t, current: currentPrice(m), baseline: m.baseline }, METRICS_MAX_SAMPLES,
+      )
+    }
+    priceHistory.set({
+      iron:          this.priceSeries.iron,
+      ice:           this.priceSeries.ice,
+      silicates:     this.priceSeries.silicates,
+      'rare-metals': this.priceSeries['rare-metals'],
+    })
+  }
+
+  // --- Processing: autonomously drain the ore silo, separating ore into resources.
+  // Idle-safe (only while ore present); pauses when the resource silo is full so it
+  // never over-fills it (the back-pressure chain: resource full → ore backs up →
+  // mining halts). Returns whether it processed this tick (for the UI status).
+  private processOre(dt: number): boolean {
+    if (this.base.oreQuantity <= 0 || this.base.isSiloFull()) return false
+    const composition = { ...this.base.oreComposition }
+    const drained = this.base.drainOre(PROCESSING_RATE * dt)
+    if (drained <= 0) return false
+    this.base.acceptCargo(separate(drained, composition))
+    this.base.credits -= drained * getPrice('processing-fee') // flat 1cr/unit (WI 568)
+    this.base.pushToStore()
+    return true
+  }
+
+  private pushOreSiloStore(processing: boolean): void {
+    oreSilo.set({
+      quantity: this.base.oreQuantity,
+      capacity: this.base.oreSiloCapacity,
+      composition: { ...this.base.oreComposition },
+      processing,
+    })
+  }
+
+  private pushInfrastructureStore(): void {
+    infrastructure.set({
+      solar:      { capacity: this.base.solarCapacity,      demand: this.autoMiners.length, price: this.effectiveElectricityPrice(), base: getPrice('electricity-per-battery-unit') },
+      propellant: { capacity: this.base.propellantCapacity, demand: this.ships.length,      price: this.effectiveFuelPrice(),      base: getPrice('fuel-refuel') },
+      foundry:    { capacity: this.base.foundryCapacity,    demand: this.autoMiners.length, price: this.effectiveRepairPrice(),      base: getPrice('repair-per-condition-point') },
+    })
+  }
+
   update(_time: number, delta: number): void {
     this.drainCommandQueue()
     this.pushStationUsage()
 
     const dt = delta / 1000
     this.gameClock += dt
+
+    // Recover resource sell prices toward baseline; push to the UI a few times a
+    // second rather than every frame (the price moves slowly).
+    this.base.recoverMarkets(dt)
+    this.marketPushAccumulator += dt
+    if (this.marketPushAccumulator >= 0.25) {
+      const elapsed = this.marketPushAccumulator
+      this.marketPushAccumulator = 0
+      this.updateMarketEvents()
+      const processing = this.processOre(elapsed)
+      this.base.pushMarketToStore()
+      this.pushInfrastructureStore()
+      this.pushOreSiloStore(processing)
+    }
+
+    this.metricsSampleAccumulator += dt
+    if (this.metricsSampleAccumulator >= METRICS_SAMPLE_INTERVAL) {
+      this.metricsSampleAccumulator = 0
+      this.sampleMetrics()
+    }
+
+    // Advance the base along its orbit, then move everything anchored to it
+    // (label, slot/hangar markers, docked/serviced ships).
+    this.base.advanceOrbit(dt)
+    this.updateBaseAttachments()
 
     this.autoSaveAccumulator += dt
     if (this.autoSaveAccumulator >= AUTO_SAVE_INTERVAL) {
@@ -2536,6 +3104,7 @@ export class SpaceScene extends Phaser.Scene {
               this.departShipForBase(waitingShip)
               return
             }
+            miner.ejectActiveNet() // bring home the partial net too
             this.beginCollecting(waitingShip, miner, () => this.performAtAsteroidRecovery(waitingShip, miner))
           })
         } else {
@@ -2560,7 +3129,8 @@ export class SpaceScene extends Phaser.Scene {
         this.asteroidMap.has(ship.asteroidTarget.id) && (
           ship.shipState === 'waiting-at-asteroid' ||
           ship.shipState === 'collecting-nets' ||
-          ship.shipState === 'resupplying-miner'
+          ship.shipState === 'resupplying-miner' ||
+          ship.shipState === 'scanning'
         )
       ) {
         const ast = ship.asteroidTarget
@@ -2598,7 +3168,9 @@ export class SpaceScene extends Phaser.Scene {
         }
       }
       ship.speedMultiplier = this.computeSpeedMultiplier(ship)
+      ship.setFlybyScale(flybyScale(ship.speedMultiplier, PROXIMITY_MIN_SPEED, SHIP_FLYBY_MAX_SCALE))
       ship.updateSteering(dt)
+      ship.updateThrusters(dt)
       // Drive attach-maneuver progress onto the reserved miner slot (per-slot fill).
       const maneuverStart = this.shipAttachManeuver.get(ship.id)
       if (maneuverStart !== undefined) {
@@ -2612,6 +3184,15 @@ export class SpaceScene extends Phaser.Scene {
       // Detect arrival: steerTowardTarget transitioned to deploying-miner
       if (ship.shipState === 'deploying-miner') {
         this.performDeploy(ship)
+      }
+      // Scanner-hauler arrival: hold for the scan duration, then reveal composition.
+      if (ship.shipState === 'scanning') {
+        const start = this.shipScanStart.get(ship.id)
+        if (start === undefined) this.shipScanStart.set(ship.id, this.time.now)
+        else if (this.time.now - start >= SCAN_DURATION_MS) {
+          this.shipScanStart.delete(ship.id)
+          this.completeScan(ship)
+        }
       }
       // Detect arrival: steerTowardTarget transitioned to loading-miner.
       // Hold in this state for the attach maneuver (RCS drains via updateSteering)
@@ -2669,7 +3250,7 @@ export class SpaceScene extends Phaser.Scene {
     }
     const stored = this.base.stationMinerIds.length
     const available = carried + stored
-    const demanded = this.designations.filter(d => d.status === 'queued' || d.status === 'claimed').length
+    const demanded = this.designations.filter(d => d.kind === 'mine' && (d.status === 'queued' || d.status === 'claimed')).length
     minerAvailability.set({ available, demanded, shortage: available < demanded })
 
     if (this.selectedShip && this.selectionRing) {
@@ -2677,5 +3258,6 @@ export class SpaceScene extends Phaser.Scene {
     }
 
     this.drawMinimap()
+    this.updateDebugOverlay()
   }
 }

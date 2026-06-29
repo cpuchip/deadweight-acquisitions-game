@@ -3,6 +3,10 @@
   import { fleetSummary } from '../state/fleetStore'
   import { commandQueue } from '../state/commandStore'
   import { autoMinerSummary, activeBeacons, attachNotifications, minerAvailability } from '../state/autoMinerStore'
+  import { activeMarketEvents } from '../state/marketEventStore'
+  import { oreSilo } from '../state/oreSiloStore'
+  import { invariantLog } from '../state/invariantStore'
+  import { get } from 'svelte/store'
 
   let saveLabel = 'Save'
   let saveTimer: ReturnType<typeof setTimeout> | null = null
@@ -27,14 +31,36 @@
     commandQueue.update(q => [...q, { type: 'manualSave' }])
     setTimeout(() => { location.href = location.pathname }, 250)
   }
+
+  $: siloFull = totalStored($baseState.storage) >= $baseState.storageCapacity
+  $: oreFull = $oreSilo.quantity >= $oreSilo.capacity
+
+  function copyInvariants(): void {
+    const lines = get(invariantLog)
+    const header = `DWA invariant report — ${new Date().toISOString()} — ${lines.length} entries`
+    void navigator.clipboard?.writeText([header, ...lines].join('\n'))
+  }
+  function clearInvariants(): void {
+    invariantLog.set([])
+  }
 </script>
 
 <div class="hud">
   <div class="hud-label">Deadweight Acquisitions</div>
-  <div class="hud-row">
+  <div class="hud-row" class:silo-full={siloFull}>
     <span class="hud-key">Storage</span>
     <span class="hud-val">{Math.floor(totalStored($baseState.storage))} / {$baseState.storageCapacity}</span>
   </div>
+  {#if siloFull}
+    <div class="hud-row silo-warning">⚠ Storage full — processing paused; sell to resume</div>
+  {/if}
+  <div class="hud-row" class:silo-full={oreFull}>
+    <span class="hud-key">Raw ore</span>
+    <span class="hud-val">{Math.floor($oreSilo.quantity)} / {$oreSilo.capacity}</span>
+  </div>
+  {#if oreFull}
+    <div class="hud-row silo-warning">⚠ Ore silo full — mining halted</div>
+  {/if}
   {#each storageEntries($baseState.storage) as [type, qty]}
     <div class="hud-row hud-indent">
       <span class="hud-key resource-{type}">{type}</span>
@@ -45,6 +71,11 @@
     <span class="hud-key">Credits</span>
     <span class="hud-val credits">{$baseState.credits}</span>
   </div>
+  {#each $activeMarketEvents as ev}
+    <div class="hud-row market-event" class:up={ev.multiplier > 1}>
+      <span class="event-msg">{ev.multiplier > 1 ? '▲' : '▼'} {ev.resourceType} {ev.type} ×{ev.multiplier.toFixed(1)}</span>
+    </div>
+  {/each}
   <div class="hud-row hud-section">
     <span class="hud-key">Fleet</span>
   </div>
@@ -117,6 +148,13 @@
       <button class="dispatch-btn" on:click={() => commandQueue.update(q => [...q, { type: 'respondToBeacon', minerId: beacon.id }])}>Dispatch</button>
     </div>
   {/each}
+  {#if $invariantLog.length > 0}
+    <div class="hud-row hud-section invariant-copy">
+      <span class="hud-key miner-stuck">⚠ Invariants ({$invariantLog.length})</span>
+      <button class="dispatch-btn" on:click={copyInvariants}>Copy</button>
+      <button class="dispatch-btn" on:click={clearInvariants}>Clear</button>
+    </div>
+  {/if}
   <div class="hud-row hud-section">
     <button class="save-btn" on:click={manualSave}>{saveLabel}</button>
     <button class="save-btn" on:click={mainMenu}>Main Menu</button>
@@ -214,6 +252,31 @@
   .dispatch-btn:hover {
     color: #ffcc88;
     border-color: #ffaa44;
+  }
+
+  .market-event {
+    border-left: 2px solid #cc8844;
+    padding-left: 4px;
+  }
+
+  .event-msg {
+    color: #ffaa44;
+    font-size: 10px;
+  }
+
+  .market-event.up .event-msg {
+    color: #66cc88;
+  }
+
+  .silo-full .hud-val {
+    color: #ff6655;
+  }
+
+  .silo-warning {
+    color: #ff6655;
+    font-size: 10px;
+    border-left: 2px solid #ff6655;
+    padding-left: 4px;
   }
 
   .miner-shortage {

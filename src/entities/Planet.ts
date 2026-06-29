@@ -2,6 +2,10 @@ import Phaser from 'phaser'
 
 export const PLANET_TEXTURE_KEY = 'planet'
 export const PLANET_RADIUS = 280
+// Generated planet sprite (asset-harness). Single frame 'planet'; pole-on gas giant with an
+// off-centre storm so the slow spin reads.
+export const PLANET_ATLAS_KEY = 'dwa_planet'
+const PLANET_SPIN_MS = 120000  // one slow revolution (~2 min); we view a pole, so spin about z
 
 export function generatePlanetTexture(scene: Phaser.Scene): void {
   if (scene.textures.exists(PLANET_TEXTURE_KEY)) return
@@ -32,8 +36,12 @@ export function generatePlanetTexture(scene: Phaser.Scene): void {
 
 export class Planet extends Phaser.GameObjects.Image {
   constructor(scene: Phaser.Scene) {
-    super(scene, 0, 0, PLANET_TEXTURE_KEY)
+    const useAtlas = scene.textures.exists(PLANET_ATLAS_KEY)
+    super(scene, 0, 0, useAtlas ? PLANET_ATLAS_KEY : PLANET_TEXTURE_KEY, useAtlas ? 'planet' : undefined)
     scene.add.existing(this)
     this.setDepth(-10)
+    if (useAtlas) this.setDisplaySize(PLANET_RADIUS * 2, PLANET_RADIUS * 2)
+    // Slow z-rotation; the off-centre storm makes it read as a spinning pole-on planet.
+    scene.tweens.add({ targets: this, angle: 360, duration: PLANET_SPIN_MS, repeat: -1 })
   }
 }

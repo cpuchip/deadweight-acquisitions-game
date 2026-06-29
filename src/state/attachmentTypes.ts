@@ -18,6 +18,11 @@ export interface CargoNetPayload {
   readonly netId: string
 }
 
+// A reusable scanner probe occupying a medium slot (Phase 5). Fungible — no id.
+export interface ScannerPayload {
+  readonly kind: 'scanner'
+}
+
 // A slot committed to a payload the hauler does not yet physically hold (a miner
 // it is travelling to recover, or a net mid-collection). Non-null so free-slot
 // checks (`payload === null`) treat it as occupied; its `kind` never matches a
@@ -29,7 +34,7 @@ export interface ReservedPayload {
   readonly targetId: string
 }
 
-export type AttachmentPayload = NetStorePayload | AutoMinerPayload | CargoNetPayload | ReservedPayload
+export type AttachmentPayload = NetStorePayload | AutoMinerPayload | CargoNetPayload | ReservedPayload | ScannerPayload
 
 export interface AttachmentPoint {
   readonly id: string

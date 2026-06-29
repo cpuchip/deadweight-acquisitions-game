@@ -64,8 +64,8 @@ export const RESOURCE_COLORS: Record<ResourceType, number> = {
 }
 
 export const RESOURCE_SELL_PRICES: Record<ResourceType, number> = {
-  iron:          2,
-  ice:           3,
-  silicates:     3,
-  'rare-metals': 10,
+  iron:          3,
+  ice:           5,
+  silicates:     4,
+  'rare-metals': 14,
 }

@@ -20,6 +20,8 @@ function buildSha(): string {
 const BUILD_SHA = buildSha()
 
 export default defineConfig({
+  // Dave's relative base — lets the build be hosted under a subpath; harmless at root.
+  base: './',
   define: {
     __BUILD_SHA__: JSON.stringify(BUILD_SHA),
   },

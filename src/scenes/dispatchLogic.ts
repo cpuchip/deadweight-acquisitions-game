@@ -22,6 +22,10 @@ export function shipHasFreeMediumSlot(ship: SlottedShip): boolean {
   return ship.attachmentPoints.some(ap => ap.size === 'medium' && ap.payload === null)
 }
 
+export function shipHasFreeSmallSlot(ship: SlottedShip): boolean {
+  return ship.attachmentPoints.some(ap => ap.size === 'small' && ap.payload === null)
+}
+
 /** Returns the nearest idle ship that has at least one free medium slot, or null. */
 export function selectDispatchTarget<S extends SlottedShip>(
   ships: S[],
@@ -74,6 +78,39 @@ export function selectHaulerForDesignation<S extends SlottedShip>(
     s.attachmentPoints.some(ap => ap.size === 'medium' && ap.payload === null),
   )
   return withFreeSlot ?? null
+}
+
+export function shipCarriesScanner(ship: SlottedShip): boolean {
+  return ship.attachmentPoints.some(ap => ap.payload?.kind === 'scanner')
+}
+
+/**
+ * Selects an idle hauler to fulfil a scan designation, nearest to `target`.
+ * Preference 1: an idle ship already carrying a scanner probe (reusable).
+ * Preference 2 (only when scannerCount > 0): nearest idle ship with a free medium
+ *   slot — it draws a scanner from station storage. Returns null if none qualify.
+ */
+export function selectScanHauler<S extends SlottedShip>(
+  ships: S[],
+  scannerCount: number,
+  target: { x: number; y: number },
+): { ship: S; drawFromStorage: boolean } | null {
+  const idle = ships.filter(s => s.shipState === 'idle')
+  const nearest = (cands: S[]): S | null =>
+    cands.reduce<S | null>(
+      (best, s) =>
+        !best || distSq(s.x, s.y, target.x, target.y) < distSq(best.x, best.y, target.x, target.y) ? s : best,
+      null,
+    )
+
+  const carrier = nearest(idle.filter(shipCarriesScanner))
+  if (carrier) return { ship: carrier, drawFromStorage: false }
+
+  if (scannerCount > 0) {
+    const free = nearest(idle.filter(shipHasFreeSmallSlot)) // probes use a small slot
+    if (free) return { ship: free, drawFromStorage: true }
+  }
+  return null
 }
 
 /** Returns the nearest asteroid not in occupiedAsteroidIds, or null. */

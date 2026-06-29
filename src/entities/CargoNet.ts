@@ -2,6 +2,7 @@ import Phaser from 'phaser'
 import { nanoid } from 'nanoid'
 import { selectedCargoNet } from '../state/cargoNetStore'
 import type { ResourceType } from '../world/worldConfig'
+import { type Composition, dominantResource } from '../world/composition'
 
 export type CargoNetState = 'full-tethered' | 'in-transit' | 'unloading'
 
@@ -29,6 +30,8 @@ export function generateCargoNetTexture(scene: Phaser.Scene): void {
 export class CargoNet extends Phaser.GameObjects.Image {
   readonly id: string
   state: CargoNetState
+  // The ore's makeup. `resourceType` is the dominant, kept for display/colour.
+  readonly composition: Composition
   readonly resourceType: ResourceType
   quantity: number
   asteroidId: string | null
@@ -42,7 +45,7 @@ export class CargoNet extends Phaser.GameObjects.Image {
 
   constructor(
     scene: Phaser.Scene,
-    resourceType: ResourceType,
+    composition: Composition,
     quantity: number,
     asteroidId: string | null = null,
     id?: string,
@@ -50,7 +53,8 @@ export class CargoNet extends Phaser.GameObjects.Image {
     super(scene, 0, 0, CARGO_NET_TEXTURE_KEY)
     this.id = id ?? nanoid()
     this.state = 'full-tethered'
-    this.resourceType = resourceType
+    this.composition = composition
+    this.resourceType = dominantResource(composition)
     this.quantity = quantity
     this.asteroidId = asteroidId
     this.isSelected = false

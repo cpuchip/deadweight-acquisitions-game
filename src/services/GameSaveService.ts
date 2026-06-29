@@ -1,7 +1,10 @@
 import type { SaveState } from '../state/gameState'
 import { makeDefaultLoadout } from '../state/attachmentTypes'
 import { HAULER_FUEL_MAX, HAULER_RCS_MAX, HAULER_BATTERY_MAX } from '../entities/Ship'
-import { MINER_BATTERY_MAX, MINER_RCS_MAX } from '../entities/AutoMiner'
+import { BASE_STORAGE_CAPACITY, ORE_SILO_CAPACITY } from '../entities/Base'
+import { pureComposition } from '../world/composition'
+import type { ResourceType } from '../world/worldConfig'
+import { MINER_BATTERY_MAX } from '../entities/AutoMiner'
 
 const SAVE_KEY = 'dwa-save'
 
@@ -258,7 +261,9 @@ function migrate(raw: SaveState): SaveState | null {
         autoMiners: (raw.autoMiners as unknown as Array<Record<string, unknown>>).map(m => ({
           ...m,
           battery: (m as { battery?: number }).battery ?? MINER_BATTERY_MAX,
-          rcsFuel: (m as { rcsFuel?: number }).rcsFuel ?? MINER_RCS_MAX,
+          // Miner RCS was removed (WI 558); this historical migration keeps adding the
+          // now-ignored field with its original default so the v19→v20 step is unchanged.
+          rcsFuel: (m as { rcsFuel?: number }).rcsFuel ?? 50,
         })),
       } as unknown as SaveState
       // falls through
@@ -274,6 +279,105 @@ function migrate(raw: SaveState): SaveState | null {
       } as unknown as SaveState
       // falls through
     case 21:
+      // v21 → v22: persist storageCapacity on base (was reconstructed from constant)
+      raw = {
+        ...raw,
+        schemaVersion: 22,
+        base: {
+          ...(raw.base as unknown as Record<string, unknown>),
+          storageCapacity: (raw.base as { storageCapacity?: number }).storageCapacity ?? BASE_STORAGE_CAPACITY,
+        },
+      } as unknown as SaveState
+      // falls through
+    case 22:
+      // v22 → v23: add per-resource marketPressure on base (defaults to undepressed)
+      raw = {
+        ...raw,
+        schemaVersion: 23,
+        base: {
+          ...(raw.base as unknown as Record<string, unknown>),
+          marketPressure: (raw.base as { marketPressure?: unknown }).marketPressure ?? {},
+        },
+      } as unknown as SaveState
+      // falls through
+    case 23:
+      // v23 → v24: add per-lever infrastructure capacities on base (default 0)
+      raw = {
+        ...raw,
+        schemaVersion: 24,
+        base: {
+          ...(raw.base as unknown as Record<string, unknown>),
+          solarCapacity: (raw.base as { solarCapacity?: number }).solarCapacity ?? 0,
+          propellantCapacity: (raw.base as { propellantCapacity?: number }).propellantCapacity ?? 0,
+          foundryCapacity: (raw.base as { foundryCapacity?: number }).foundryCapacity ?? 0,
+        },
+      } as unknown as SaveState
+      // falls through
+    case 24:
+      // v24 → v25: add top-level marketEvents (legacy saves get a fresh schedule on load)
+      raw = {
+        ...raw,
+        schemaVersion: 25,
+        marketEvents: (raw as { marketEvents?: unknown }).marketEvents ?? { active: [], nextEventAt: 0, seed: 0 },
+      } as unknown as SaveState
+      // falls through
+    case 25:
+      // v25 → v26: add composition (pure-dominant from resourceType) + scanned to asteroids
+      raw = {
+        ...raw,
+        schemaVersion: 26,
+        asteroids: (raw.asteroids as unknown as Array<{ resourceType: ResourceType; composition?: unknown; scanned?: boolean }>).map(a => ({
+          ...a,
+          composition: a.composition ?? pureComposition(a.resourceType),
+          scanned: a.scanned ?? false,
+        })),
+      } as unknown as SaveState
+      // falls through
+    case 26: {
+      // v26 → v27: ore-pipeline cutover. Nets carry composition (pure from their
+      // resourceType); miners gain activeComposition; the base gains the raw-ore silo.
+      const emptyComp = { iron: 0, ice: 0, silicates: 0, 'rare-metals': 0 }
+      raw = {
+        ...raw,
+        schemaVersion: 27,
+        cargoNets: (raw.cargoNets as unknown as Array<{ resourceType: ResourceType; composition?: unknown }>).map(n => ({
+          ...n,
+          composition: n.composition ?? pureComposition(n.resourceType),
+        })),
+        autoMiners: (raw.autoMiners as unknown as Array<{ activeResourceType?: ResourceType | null; activeComposition?: unknown }>).map(m => ({
+          ...m,
+          activeComposition: m.activeComposition ?? (m.activeResourceType ? pureComposition(m.activeResourceType) : null),
+        })),
+        base: {
+          ...(raw.base as unknown as Record<string, unknown>),
+          oreQuantity: (raw.base as { oreQuantity?: number }).oreQuantity ?? 0,
+          oreComposition: (raw.base as { oreComposition?: unknown }).oreComposition ?? emptyComp,
+          oreSiloCapacity: (raw.base as { oreSiloCapacity?: number }).oreSiloCapacity ?? ORE_SILO_CAPACITY,
+        },
+      } as unknown as SaveState
+      // falls through
+    }
+    case 27:
+      // v27 → v28: scanner probe support. Tag designations kind='mine'; add base
+      // scannerCount; add ship isScanJob. All default to the pre-scanner state.
+      raw = {
+        ...raw,
+        schemaVersion: 28,
+        designations: (raw.designations as unknown as Array<{ kind?: string }>).map(d => ({
+          ...d,
+          kind: d.kind ?? 'mine',
+        })),
+        ships: (raw.ships as unknown as Array<Record<string, unknown>>).map(s => ({
+          ...s,
+          isScanJob: (s as { isScanJob?: boolean }).isScanJob ?? false,
+        })),
+        base: {
+          ...(raw.base as unknown as Record<string, unknown>),
+          scannerCount: (raw.base as { scannerCount?: number }).scannerCount ?? 0,
+        },
+      } as unknown as SaveState
+      // falls through
+    case 28:
       return raw
     default:
       console.warn(`GameSaveService: unrecognized schema version ${raw.schemaVersion}, discarding save`)

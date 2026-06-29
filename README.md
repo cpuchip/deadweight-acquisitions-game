@@ -24,3 +24,10 @@ make compile   # TypeScript type-check (no emit)
 make test      # run unit tests (Vitest)
 make clean     # remove node_modules/ and dist/
 ```
+
+## License
+
+- **Code** is released into the public domain — see [`UNLICENSE`](UNLICENSE).
+- **Bundled sprite art** (`public/assets/`) is AI-generated and licensed
+  **Apache 2.0** — see [`ASSETS.md`](ASSETS.md) for attribution and the generation
+  chain, with the license text in [`licenses/Apache-2.0.txt`](licenses/Apache-2.0.txt).

@@ -1,5 +1,6 @@
 import { writable } from 'svelte/store'
 import type { ResourceType, SizeCategory } from '../world/worldConfig'
+import type { Composition } from '../world/composition'
 import type { AttachmentPoint } from './attachmentTypes'
 
 export type ShipState =
@@ -12,6 +13,7 @@ export type ShipState =
   | 'entering-hangar'
   | 'traveling-to-asteroid'
   | 'deploying-miner'
+  | 'scanning'
   | 'waiting-at-asteroid'
   | 'collecting-nets'
   | 'resupplying-miner'
@@ -40,6 +42,8 @@ export interface SelectedShipData {
 export interface SelectedAsteroidData {
   id: string
   resourceType: ResourceType
+  composition: Composition
+  scanned: boolean
   currentQuantity: number
   maxQuantity: number
   sizeCategory: SizeCategory
