@@ -419,6 +419,71 @@ assert(final.asteroids.some((a) => a.isCompany), 'company asteroids are flagged 
   assert(after2.cargoLevel === 1 && after2.cargoCapacity > capBefore, 'cargo upgrade raises capacity')
 }
 
+// ---- Tier 3a: dynamic sell market + global market events (faithful to Dave's SP) ----
+{
+  const w = new World(7)
+  w.addCorp('M', 'Marketeer', 0x44ff88)
+  w.start()
+  // markets start rested: live price == reference baseline, zero pressure
+  {
+    const c = w.snapshot().corps[0]
+    assert(c.prices.iron.current === RESOURCE_SELL_PRICES.iron, 'market opens at the reference baseline')
+    assert(c.prices.iron.pressure === 0, 'market opens with zero sell-pressure')
+  }
+  // designate the NEAREST rock so the single hauler keeps storage fed quickly
+  w.applyCommand('M', { kind: 'buyMiner' })
+  const s0 = w.snapshot()
+  const base = s0.corps[0]
+  let near: { id: string; d: number } | null = null
+  for (const a of s0.asteroids) {
+    const d = Math.hypot(a.x - base.baseX, a.y - base.baseY)
+    if (!near || d < near.d) near = { id: a.id, d }
+  }
+  w.applyCommand('M', { kind: 'designate', asteroidId: near!.id })
+  // run until ore is delivered to base storage (the deploy -> mine -> shuttle loop)
+  let res: ResourceType | null = null
+  for (let i = 0; i < 600 * SIM_HZ && !res; i++) {
+    w.tick(dt)
+    const st = w.snapshot().corps[0].storage
+    res = (Object.keys(st) as ResourceType[]).find((k) => (st[k] ?? 0) > 0) ?? null
+  }
+  assert(!!res, 'mined ore reached base storage (a resource to sell)')
+
+  const before = w.snapshot().corps[0]
+  const priceBefore = before.prices[res!].current
+  const credBefore = before.credits
+  w.applyCommand('M', { kind: 'sell', resource: res! })
+  const afterSell = w.snapshot().corps[0]
+  assert(afterSell.credits > credBefore, 'selling adds credits')
+  assert(afterSell.storage[res!] === undefined || (afterSell.storage[res!] ?? 0) === 0, 'selling empties that resource')
+  assert(afterSell.prices[res!].current < priceBefore, 'a sell depresses the live price (sell-pressure rises)')
+  assert(afterSell.prices[res!].pressure > 0, 'sell-pressure is recorded on the market')
+
+  // recovery: hold off selling and the price climbs back toward baseline over time
+  const depressed = afterSell.prices[res!].current
+  for (let i = 0; i < 60 * SIM_HZ; i++) w.tick(dt)
+  assert(w.snapshot().corps[0].prices[res!].current > depressed, 'price recovers toward baseline when a corp holds off')
+}
+{
+  // a market event eventually fires (EVENT_INTERVAL_MIN = 45s) and reaches the wire,
+  // shifting the affected resource's baseline away from its reference price
+  const w = new World(99)
+  w.addCorp('E', 'Eventful', 0x8844ff)
+  w.start()
+  let ev: { resourceType: ResourceType; multiplier: number } | null = null
+  for (let i = 0; i < 180 * SIM_HZ && !ev; i++) {
+    w.tick(dt)
+    const evs = w.snapshot().marketEvents
+    if (evs.length > 0) ev = evs[0]
+  }
+  assert(!!ev, 'a global market event fires and reaches the snapshot')
+  if (ev) {
+    const baseline = w.snapshot().corps[0].prices[ev.resourceType].baseline
+    const ref = RESOURCE_SELL_PRICES[ev.resourceType]
+    assert(Math.abs(baseline - ref * ev.multiplier) < 0.2, 'the event multiplier is folded into the resource baseline')
+  }
+}
+
 if (failures > 0) {
   console.error(`\n${failures} assertion(s) failed`)
   process.exit(1)

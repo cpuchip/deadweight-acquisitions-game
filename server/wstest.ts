@@ -4,7 +4,7 @@
 // Usage: start the server, then: npx tsx server/wstest.ts
 
 import WebSocket from 'ws'
-import type { ClientMessage, ServerMessage, WorldSnapshot } from '../shared/protocol'
+import type { ClientMessage, ServerMessage, WorldSnapshot, ResourceType } from '../shared/protocol'
 
 const URL = process.env.WS_URL || 'ws://localhost:8080/ws'
 const ROOM = 'ittest-' + Math.floor(Math.random() * 1000)
@@ -114,6 +114,23 @@ async function main(): Promise<void> {
   }
   assert(sawMiner, 'a miner was deployed at the asteroid')
   assert(earned, 'deep loop shuttled ore to base over the network')
+
+  // Tier 3a: dynamic market over the wire — the snapshot carries live prices, and
+  // selling a stocked resource depresses its price (sell-pressure) for everyone to see
+  {
+    const a = alpha.snap?.corps.find((c) => c.id === alpha.corpId)
+    const res = a ? (Object.keys(a.storage) as ResourceType[]).find((k) => (a.storage[k] ?? 0) > 0) : undefined
+    assert(!!a && typeof a.prices?.iron?.current === 'number', 'snapshot carries live market prices')
+    if (a && res) {
+      const priceBefore = a.prices[res].current
+      send(alpha.ws, { type: 'cmd', cmd: { kind: 'sell', resource: res } })
+      await sleep(800)
+      const a2 = alpha.snap?.corps.find((c) => c.id === alpha.corpId)
+      assert((a2?.prices[res].current ?? 1e9) < priceBefore, 'selling depresses the live price over the wire')
+    } else {
+      console.log('  (no stocked resource to sell — dynamic-price wire check skipped)')
+    }
+  }
 
   // Keplerian orbiting: by now (many seconds in) the probed asteroid has drifted
   if (orbitProbe) {

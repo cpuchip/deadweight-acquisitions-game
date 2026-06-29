@@ -48,6 +48,27 @@ export interface OrphanNetSnap {
   amount: number
 }
 
+/** Live view of one resource's sell market. `current` already reflects any active
+ * market event (the event multiplier is folded into the baseline server-side). */
+export interface MarketPrice {
+  /** live per-unit sell price right now (baseline depressed by recent sell-pressure) */
+  current: number
+  /** standing value absent depression — moves with market events */
+  baseline: number
+  /** accumulated recent-sales pressure (0 = price rested at baseline) */
+  pressure: number
+}
+
+/** A global market event shifting one resource's baseline for a window. */
+export interface MarketEventSnap {
+  resourceType: ResourceType
+  type: 'spike' | 'glut' | 'drought'
+  /** baseline multiplier while active (>1 raises price, <1 lowers it) */
+  multiplier: number
+  /** sim time at which the event ends */
+  endTime: number
+}
+
 export interface AsteroidSnap {
   id: string
   x: number
@@ -101,6 +122,8 @@ export interface CorpSnap {
   /** resources held in base storage, awaiting sale */
   storage: Partial<Record<ResourceType, number>>
   storageCapacity: number
+  /** per-resource live sell market (dynamic pricing — faithful to SP) */
+  prices: Record<ResourceType, MarketPrice>
   /** total AutoMiners owned (deployed + idle in inventory) */
   minerCount: number
   /** miners currently deployed at asteroids */
@@ -143,6 +166,8 @@ export interface WorldSnapshot {
   asteroids: AsteroidSnap[]
   corps: CorpSnap[]
   winnerCorpId: string | null
+  /** active global market events (spike/glut/drought) shifting resource baselines */
+  marketEvents: MarketEventSnap[]
   /** most recent match events, newest last (liquidations, claims won, etc.) */
   log: string[]
 }

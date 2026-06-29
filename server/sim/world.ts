@@ -19,6 +19,16 @@ import {
   ORBITAL_K,
   type ResourceType,
 } from '../../src/world/worldConfig'
+// Dave's pure (Phaser-free) economy modules — reused verbatim so MP pricing matches SP.
+import { makeMarket, sell, recover, currentPrice, type ResourceMarket } from '../../src/world/market'
+import {
+  rollEvent,
+  nextInterval,
+  isExpired,
+  combinedMultiplier,
+  type MarketEvent,
+} from '../../src/world/marketEvents'
+import { createRng, type Rng } from '../../src/world/rng'
 import {
   FIRST_PERIOD_SECONDS,
   QUOTA_PERIOD_SECONDS,
@@ -138,6 +148,27 @@ interface SimMiner {
   battery: number
 }
 
+const RESOURCE_TYPES: ResourceType[] = ['iron', 'ice', 'silicates', 'rare-metals']
+
+/** A fresh per-corp market set, each resource seeded at its reference baseline. */
+function freshMarkets(): Record<ResourceType, ResourceMarket> {
+  return {
+    iron: makeMarket(RESOURCE_SELL_PRICES.iron),
+    ice: makeMarket(RESOURCE_SELL_PRICES.ice),
+    silicates: makeMarket(RESOURCE_SELL_PRICES.silicates),
+    'rare-metals': makeMarket(RESOURCE_SELL_PRICES['rare-metals']),
+  }
+}
+
+/** Wire view of a single resource market: live price + standing baseline + sell-pressure. */
+function priceSnap(m: ResourceMarket): { current: number; baseline: number; pressure: number } {
+  return {
+    current: Math.round(currentPrice(m) * 10) / 10,
+    baseline: Math.round(m.baseline * 10) / 10,
+    pressure: Math.round(m.pressure),
+  }
+}
+
 interface SimCorp {
   id: string
   name: string
@@ -146,6 +177,8 @@ interface SimCorp {
   baseY: number
   credits: number
   storage: Partial<Record<ResourceType, number>>
+  /** per-resource dynamic sell market (price elasticity, faithful to Dave's SP) */
+  markets: Record<ResourceType, ResourceMarket>
   tonnage: number
   periodTonnage: number
   ships: SimShip[]
@@ -200,6 +233,11 @@ export class World {
   private naturalTotal = 0 // initial ore in the natural (non-company) field
   private companyArrivalAccumulator = 0
   private arrivalCounter = 0
+  /** global market events (spike/glut/drought) — same conditions for every corp */
+  private marketEvents: MarketEvent[] = []
+  private nextEventAt = 0
+  /** deterministic stream for market events, distinct from the field-gen stream */
+  private readonly marketRng: Rng
 
   constructor(seed: number) {
     this.seed = seed
@@ -207,6 +245,8 @@ export class World {
       this.asteroids.set(a.id, { ...a, claimedBy: null })
       if (!a.isCompany) this.naturalTotal += a.currentQuantity
     }
+    // a separate RNG stream so events don't perturb the shared field's layout
+    this.marketRng = createRng((seed ^ 0x5f3759df) >>> 0)
   }
 
   // ---- membership ----
@@ -224,6 +264,7 @@ export class World {
       baseY,
       credits: STARTING_CREDITS,
       storage: {},
+      markets: freshMarkets(),
       tonnage: 0,
       periodTonnage: 0,
       ships: [],
@@ -293,6 +334,8 @@ export class World {
     this.period = 1
     this.quota = QUOTA_BASE
     this.periodEndsAt = FIRST_PERIOD_SECONDS
+    this.marketEvents = []
+    this.nextEventAt = nextInterval(this.marketRng)
     this.pushLog(`Match started — ${this.corps.size} corp(s). Setup period: hit ${QUOTA_BASE} t.`)
   }
 
@@ -463,7 +506,12 @@ export class World {
     const qty = corp.storage[resource] ?? 0
     if (qty <= 0) return
     corp.storage[resource] = 0
-    corp.credits += qty * (RESOURCE_SELL_PRICES[resource] ?? 1)
+    // dynamic market: a dump prices across the batch at the midpoint pressure, so it
+    // earns progressively less per unit than the same tonnage trickled out over time.
+    const market = corp.markets[resource] ?? makeMarket(RESOURCE_SELL_PRICES[resource] ?? 1)
+    const result = sell(market, qty)
+    corp.markets[resource] = result.market
+    corp.credits += result.revenue
   }
 
   // ---- simulation ----
@@ -473,6 +521,7 @@ export class World {
     this.t += dt
 
     this.orbitAsteroids(dt)
+    this.updateMarkets(dt)
 
     for (const corp of this.corps.values()) {
       if (!corp.alive) continue
@@ -491,6 +540,28 @@ export class World {
     this.companyArrivals(dt)
 
     if (this.t >= this.periodEndsAt) this.deadline()
+  }
+
+  /** Dynamic sell economy (faithful to Dave's SP): roll occasional global market events
+   * (spike/glut/drought), fold their multiplier into every corp's baseline, and decay
+   * each market's sell-pressure so prices recover toward baseline when a corp holds off. */
+  private updateMarkets(dt: number): void {
+    // global events: spawn at most one due event per tick (caps catch-up), prune expired
+    if (this.t >= this.nextEventAt) {
+      this.marketEvents.push(rollEvent(this.marketRng, this.t))
+      this.nextEventAt = this.t + nextInterval(this.marketRng)
+    }
+    if (this.marketEvents.length > 0) {
+      this.marketEvents = this.marketEvents.filter((e) => !isExpired(e, this.t))
+    }
+    for (const corp of this.corps.values()) {
+      for (const res of RESOURCE_TYPES) {
+        const m = corp.markets[res]
+        if (!m) continue
+        m.baseline = (RESOURCE_SELL_PRICES[res] ?? 1) * combinedMultiplier(this.marketEvents, res, this.t)
+        corp.markets[res] = recover(m, dt)
+      }
+    }
   }
 
   /** Keplerian orbiting: every asteroid drifts along its orbit around the planet,
@@ -1013,6 +1084,12 @@ export class World {
       credits: Math.floor(c.credits),
       storage: roundStorage(c.storage),
       storageCapacity: STORAGE_CAPACITY,
+      prices: {
+        iron: priceSnap(c.markets.iron),
+        ice: priceSnap(c.markets.ice),
+        silicates: priceSnap(c.markets.silicates),
+        'rare-metals': priceSnap(c.markets['rare-metals']),
+      },
       minerCount: c.minersOwned,
       miners: c.deployedMiners.map((m) => ({
         id: m.id,
@@ -1073,6 +1150,12 @@ export class World {
       asteroids,
       corps,
       winnerCorpId: this.winnerCorpId,
+      marketEvents: this.marketEvents.map((e) => ({
+        resourceType: e.resourceType,
+        type: e.type,
+        multiplier: Math.round(e.multiplier * 100) / 100,
+        endTime: Math.round(e.endTime * 10) / 10,
+      })),
       log: [...this.log],
     }
   }
@@ -1093,6 +1176,8 @@ export class World {
       companyArrivalAccumulator: this.companyArrivalAccumulator,
       arrivalCounter: this.arrivalCounter,
       naturalTotal: this.naturalTotal,
+      marketEvents: this.marketEvents,
+      nextEventAt: this.nextEventAt,
       asteroids: [...this.asteroids.values()],
       corps: [...this.corps.values()],
       log: this.log,
@@ -1112,8 +1197,16 @@ export class World {
     w.companyArrivalAccumulator = s.companyArrivalAccumulator ?? 0
     w.arrivalCounter = s.arrivalCounter ?? 0
     w.naturalTotal = s.naturalTotal ?? 0
+    w.marketEvents = s.marketEvents ?? []
+    w.nextEventAt = s.nextEventAt ?? 0
     w.asteroids = new Map((s.asteroids as SimAsteroid[]).map((a) => [a.id, a]))
-    w.corps = new Map((s.corps as SimCorp[]).map((c) => [c.id, c]))
+    w.corps = new Map(
+      (s.corps as SimCorp[]).map((c) => {
+        // a room persisted before dynamic markets existed restores without them
+        if (!c.markets) c.markets = freshMarkets()
+        return [c.id, c]
+      }),
+    )
     w.log = s.log ?? []
     return w
   }

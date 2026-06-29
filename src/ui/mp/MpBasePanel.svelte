@@ -22,6 +22,10 @@
   $: stored = me ? Object.values(me.storage).reduce((s, n) => s + (n ?? 0), 0) : 0
   $: deployed = me ? me.miners.length : 0
   $: selShip = me ? me.ships.find((s) => s.id === $mpSelectedShip) ?? null : null
+  $: events = world?.marketEvents ?? []
+  function eventFor(type: ResourceType) {
+    return events.find((e) => e.resourceType === type) ?? null
+  }
 
   function close(): void {
     mpBasePanelOpen.set(false)
@@ -65,13 +69,17 @@
     <div class="row"><span class="label">Storage</span><span class="value">{Math.floor(stored)} / {me.storageCapacity}</span></div>
     <div class="row"><span class="label">Fleet</span><span class="value">{me.ships.length} hauler{me.ships.length === 1 ? '' : 's'} · {me.minerCount} miner{me.minerCount === 1 ? '' : 's'} ({deployed} deployed)</span></div>
 
-    <div class="sec">MARKET</div>
+    <div class="sec">MARKET <span class="sec-note">live price · dumping depresses it</span></div>
     {#each RESOURCE_ORDER as type}
       {@const qty = Math.floor(me.storage[type] ?? 0)}
+      {@const p = me.prices[type]}
+      {@const ev = eventFor(type)}
       <div class="row mkt" class:off={qty <= 0}>
         <span class="label resource-{type}">{RESOURCE_LABELS[type]}</span>
         <span class="qty">{qty}</span>
-        <span class="price">@{RESOURCE_SELL_PRICES[type]}cr</span>
+        <span class="price" class:lo={p.current < p.baseline - 0.05}>
+          @{p.current}cr{#if ev}<span class="ev" class:up={ev.multiplier >= 1} title="{ev.type} ×{ev.multiplier}">{ev.multiplier >= 1 ? '▲' : '▼'}</span>{/if}
+        </span>
         <button class="btn" disabled={qty <= 0} on:click={() => sell(type)}>Sell</button>
       </div>
     {/each}
@@ -226,6 +234,23 @@
     color: #6a8a9a;
     font-size: 10px;
     min-width: 42px;
+  }
+  .price.lo {
+    color: #d88a4a; /* depressed by your own recent dumping */
+  }
+  .ev {
+    margin-left: 2px;
+    font-size: 9px;
+    color: #d88a4a; /* glut/drought pulling the baseline down */
+  }
+  .ev.up {
+    color: #6ad88a; /* spike/drought pushing the baseline up */
+  }
+  .sec-note {
+    color: #2f5570;
+    letter-spacing: 0;
+    text-transform: none;
+    font-size: 9px;
   }
   .buy,
   .mkt {
