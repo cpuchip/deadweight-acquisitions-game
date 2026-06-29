@@ -119,7 +119,16 @@ async function main(): Promise<void> {
   // selling a stocked resource depresses its price (sell-pressure) for everyone to see
   {
     const a = alpha.snap?.corps.find((c) => c.id === alpha.corpId)
-    const res = a ? (Object.keys(a.storage) as ResourceType[]).find((k) => (a.storage[k] ?? 0) > 0) : undefined
+    // sell the DOMINANT (largest) resource — a trace sale can be too small to move the
+    // wire-rounded price (storage is now multi-resource after the Tier-3b composition split)
+    let res: ResourceType | undefined
+    let maxQty = 0
+    for (const [k, q] of Object.entries(a?.storage ?? {}) as [ResourceType, number][]) {
+      if ((q ?? 0) > maxQty) {
+        maxQty = q ?? 0
+        res = k
+      }
+    }
     assert(!!a && typeof a.prices?.iron?.current === 'number', 'snapshot carries live market prices')
     if (a && res) {
       const priceBefore = a.prices[res].current

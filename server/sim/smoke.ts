@@ -441,13 +441,31 @@ assert(final.asteroids.some((a) => a.isCompany), 'company asteroids are flagged 
   }
   w.applyCommand('M', { kind: 'designate', asteroidId: near!.id })
   // run until ore is delivered to base storage (the deploy -> mine -> shuttle loop)
-  let res: ResourceType | null = null
-  for (let i = 0; i < 600 * SIM_HZ && !res; i++) {
+  let delivered = false
+  for (let i = 0; i < 600 * SIM_HZ && !delivered; i++) {
     w.tick(dt)
-    const st = w.snapshot().corps[0].storage
-    res = (Object.keys(st) as ResourceType[]).find((k) => (st[k] ?? 0) > 0) ?? null
+    delivered = (Object.values(w.snapshot().corps[0].storage) as number[]).some((v) => (v ?? 0) > 0)
   }
-  assert(!!res, 'mined ore reached base storage (a resource to sell)')
+  assert(delivered, 'mined ore reached base storage (a resource to sell)')
+
+  // Tier 3b: a rock's ore separates by composition — the delivered ore yields the
+  // dominant resource PLUS trace amounts of the others (faithful to Dave's Phase 5),
+  // so storage holds more than one resource type after a single rock's delivery.
+  const st0 = w.snapshot().corps[0].storage
+  {
+    const kinds = (Object.keys(st0) as ResourceType[]).filter((k) => (st0[k] ?? 0) > 0)
+    assert(kinds.length >= 2, 'composition split: delivered ore yields the dominant + trace resources')
+  }
+  // sell the DOMINANT (largest) resource so the price move clears the wire rounding
+  let res: ResourceType | null = null
+  let maxQty = 0
+  for (const [k, q] of Object.entries(st0) as [ResourceType, number][]) {
+    if ((q ?? 0) > maxQty) {
+      maxQty = q ?? 0
+      res = k
+    }
+  }
+  assert(!!res, 'a dominant resource is stocked to sell')
 
   const before = w.snapshot().corps[0]
   const priceBefore = before.prices[res!].current

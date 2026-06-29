@@ -29,6 +29,8 @@ import {
   type MarketEvent,
 } from '../../src/world/marketEvents'
 import { createRng, type Rng } from '../../src/world/rng'
+import { separate } from '../../src/world/processing'
+import { pureComposition, type Composition } from '../../src/world/composition'
 import {
   FIRST_PERIOD_SECONDS,
   QUOTA_PERIOD_SECONDS,
@@ -112,6 +114,9 @@ interface SimShip {
   cargo: number
   cargoLevel: number
   cargoResource: ResourceType | null
+  /** composition of the ore aboard, so delivery splits into resources by trace
+   * (faithful to Dave's Phase-5 ore→processing); null = single-resource fallback */
+  cargoComposition: Composition | null
   /** the asteroid this hauler services */
   targetAsteroidId: string | null
   /** an orphaned net cluster this hauler is recovering */
@@ -141,6 +146,8 @@ interface SimMiner {
   x: number
   y: number
   resourceType: ResourceType
+  /** the host rock's composition (dominant + traces), captured at deploy */
+  composition: Composition
   /** ore mined + ejected as nets, awaiting collection (0..MINER_ORE_CAP) */
   oreReady: number
   state: MinerState
@@ -313,6 +320,7 @@ export class World {
       cargo: 0,
       cargoLevel: 0,
       cargoResource: null,
+      cargoComposition: null,
       targetAsteroidId: null,
       targetOrphanId: null,
       parkAngle: Math.random() * Math.PI * 2,
@@ -800,6 +808,7 @@ export class World {
             x: a.x,
             y: a.y,
             resourceType: a.resourceType,
+            composition: a.composition ?? pureComposition(a.resourceType),
             oreReady: 0,
             state: 'mining',
             condition: 1,
@@ -852,6 +861,7 @@ export class World {
           miner.oreReady -= take
           ship.cargo += take * (1 - NET_LEAKAGE)
           ship.cargoResource = miner.resourceType
+          ship.cargoComposition = miner.composition // split into traces on delivery
         }
         const minerDone = miner.state === 'depleted' && miner.oreReady <= 0.01
         if (minerDone) {
@@ -886,6 +896,8 @@ export class World {
             orphan.amount -= take
             ship.cargo += take * (1 - NET_LEAKAGE)
             ship.cargoResource = orphan.resourceType
+            // salvage nets are already-ejected, single-resource ore
+            ship.cargoComposition = pureComposition(orphan.resourceType)
           }
           if (orphan.amount <= 0.5) {
             corp.orphanNets = corp.orphanNets.filter((o) => o.id !== orphan.id)
@@ -962,19 +974,31 @@ export class World {
     if (ship.cargo <= 0 || !ship.cargoResource) {
       ship.cargo = 0
       ship.cargoResource = null
+      ship.cargoComposition = null
       return
     }
     const space = STORAGE_CAPACITY - this.totalStored(corp)
     const fit = Math.min(ship.cargo, Math.max(0, space))
     if (fit > 0) {
-      const res = ship.cargoResource
-      corp.storage[res] = (corp.storage[res] ?? 0) + fit
+      // Faithful to Dave's Phase-5 ore→processing: a rock's ore separates into its
+      // dominant resource PLUS trace amounts of the others, by composition. Mixed
+      // sells reward the dynamic market (small lots across resources beat one dump).
+      if (ship.cargoComposition) {
+        const split = separate(fit, ship.cargoComposition)
+        for (const res of RESOURCE_TYPES) {
+          if (split[res] > 0) corp.storage[res] = (corp.storage[res] ?? 0) + split[res]
+        }
+      } else {
+        const res = ship.cargoResource
+        corp.storage[res] = (corp.storage[res] ?? 0) + fit
+      }
       corp.tonnage += fit
       corp.periodTonnage += fit
       ship.cargo -= fit
       if (ship.cargo <= 0.5) {
         ship.cargo = 0
         ship.cargoResource = null
+        ship.cargoComposition = null
       }
     }
   }
