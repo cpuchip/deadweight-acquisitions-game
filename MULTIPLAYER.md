@@ -40,6 +40,25 @@ problem.
   over a background graphics layer (starfield/glow) and a foreground graphics layer
   (claim/selection rings, beacons, tethered nets, attachment bars, progress arcs).
 
+## Soaked from upstream — Dave's Phase-4/5 economy (2026-06-28)
+
+The server **imports Dave's pure (Phaser-free) economy modules directly**, so MP
+pricing/yields match SP rather than reimplementing them:
+- **Dynamic sell market** (`src/world/market.ts`): per-corp price elasticity — selling
+  raises sell-pressure (depressing the price), which decays toward baseline over time,
+  so trickling small lots beats one big dump. `World.updateMarkets()` recovers each tick.
+- **Global market events** (`src/world/marketEvents.ts`): seeded spike/glut/drought on a
+  separate RNG stream, same conditions for every corp, folded into each market's baseline.
+  The wire carries per-corp `prices` + active `marketEvents`; `MpBasePanel` shows live prices.
+- **Composition-weighted yields** (`src/world/processing.ts` `separate`): a rock's ore
+  delivers its dominant resource **plus trace amounts of the others**, by composition.
+- **Scan fog-of-war**: large (high-yield) rocks are `unknown` until a corp's ship or miner
+  scouts within `SCAN_RANGE` — then they reveal globally. Smaller rocks are always known.
+
+Smoke (`server/sim/smoke.ts`) and wstest cover all of the above. Deliberately **not**
+ported: the ore→processing refining minigame (the composition split already gives the
+yield), and per-corp fog-of-war (reveal is global — fine for a few friends).
+
 ## Scope — faithful economy (v2, 2026-06-17) vs. deferred micro
 
 **Faithful to Dave's single-player economy** (rebuilt after first-play feedback):
