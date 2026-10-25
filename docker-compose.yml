@@ -1,6 +1,7 @@
 # Deadweight Acquisitions — multiplayer.
 # Local:  docker compose up --build   ->  http://localhost:8080 (open two tabs)
 # Deploy: Dokploy builds this compose; map the domain to the `game` service on 8080.
+#         The host port is bound to loopback so the game is reachable only through Traefik.
 
 services:
   game:
@@ -14,7 +15,8 @@ services:
       # persists in-progress matches across redeploys/restarts (room snapshot → disk)
       - deadweight-state:/data
     ports:
-      - "8080:8080"
+      # loopback only: Traefik (Dokploy) is the public door; the client reaches /ws same-origin.
+      - "127.0.0.1:8080:8080"
     healthcheck:
       test: ['CMD', 'wget', '-qO-', 'http://localhost:8080/healthz']
       interval: 30s
